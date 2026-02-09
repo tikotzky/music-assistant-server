@@ -323,7 +323,7 @@ jobs:
     name: Publish release to PyPI (stable releases only)
     runs-on: ubuntu-latest
     needs: create-release
-    if: inputs.channel == 'stable'
+    if: inputs.channel == 'stable' && github.repository_owner == 'music-assistant'
     permissions:
       id-token: write
     steps:
@@ -453,7 +453,7 @@ jobs:
       - name: Checkout add-on repository
         uses: actions/checkout@v6
         with:
-          repository: music-assistant/home-assistant-addon
+          repository: ${{ github.repository_owner }}/music-assistant-home-assistant-addon
           token: ${{ secrets.PRIVILEGED_GITHUB_TOKEN }}
           path: addon-repo
 
