@@ -1,0 +1,10 @@
+{
+  "type": "music",
+  "domain": "twentyfour_six",
+  "name": "24six",
+  "description": "Stream Jewish music from 24six.app",
+  "codeowners": [],
+  "requirements": [],
+  "multi_instance": true,
+  "stage": "experimental"
+}
