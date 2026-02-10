@@ -24,14 +24,13 @@ public extension TwentyFourSixClient {
                 URLQueryItem(name: "page", value: String(page)),
                 URLQueryItem(name: "per_page", value: String(perPage)),
                 URLQueryItem(name: "sort", value: sortOrder.twentyFourSixAlbumValue),
+                URLQueryItem(name: "with_contents", value: "0"),
             ]
-
-            if favoriteOnly {
-                query.append(URLQueryItem(name: "library", value: "1"))
-            }
 
             if let artistId {
                 query.append(URLQueryItem(name: "artist_id", value: artistId))
+            } else {
+                query.append(URLQueryItem(name: "library", value: "1"))
             }
 
             let response = try await request(ClientRequest<PaginatedResponse<TFSCollection>>(
