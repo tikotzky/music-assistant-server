@@ -20,16 +20,13 @@ public extension TwentyFourSixClient {
         let perPage = min(limit > 0 ? limit : 200, 200)
 
         repeat {
-            var query: [URLQueryItem] = [
+            let query: [URLQueryItem] = [
                 URLQueryItem(name: "page", value: String(page)),
                 URLQueryItem(name: "per_page", value: String(perPage)),
                 URLQueryItem(name: "sort", value: sortOrder.twentyFourSixTrackValue),
                 URLQueryItem(name: "library", value: "1"),
+                URLQueryItem(name: "no_pagination", value: "0"),
             ]
-
-            if favoriteOnly {
-                query.append(URLQueryItem(name: "library", value: "1"))
-            }
 
             let response = try await request(ClientRequest<PaginatedResponse<TFSContent>>(
                 path: "music/content",
