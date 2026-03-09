@@ -10,9 +10,9 @@ import SwiftData
 @Model
 final internal class OfflineFavoriteV2 {
     @Attribute(.unique)
-    let itemIdentifier: String
+    var itemIdentifier: String
     var value: Bool
-    
+
     init(itemIdentifier: String, value: Bool) {
         self.itemIdentifier = itemIdentifier
         self.value = value

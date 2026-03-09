@@ -28,7 +28,7 @@ public extension TwentyFourSixClient {
             addQuery.append(URLQueryItem(name: "force", value: "1"))
 
             let _ = try await request(ClientRequest<EmptyResponse>(
-                path: "music/playlist/\(response.playlist.id)/add",
+                path: "music/playlist/\(response.playlist.id.value)/add",
                 method: "POST",
                 query: addQuery))
         }
@@ -100,7 +100,7 @@ public extension TwentyFourSixClient {
             throw ClientError.parseFailed
         }
 
-        let remainingIds = contents.filter { $0.id != trackId }.map { $0.id }
+        let remainingIds = contents.filter { $0.id.value != trackId }.map { $0.id.value }
 
         var query: [URLQueryItem] = remainingIds.map {
             URLQueryItem(name: "content[]", value: $0)
@@ -123,7 +123,7 @@ public extension TwentyFourSixClient {
             throw ClientError.parseFailed
         }
 
-        guard let currentIndex = contents.firstIndex(where: { $0.id == trackId }) else {
+        guard let currentIndex = contents.firstIndex(where: { $0.id.value == trackId }) else {
             throw ClientError.parseFailed
         }
 
@@ -132,7 +132,7 @@ public extension TwentyFourSixClient {
         contents.insert(item, at: targetIndex)
 
         var query: [URLQueryItem] = contents.map {
-            URLQueryItem(name: "content[]", value: $0.id)
+            URLQueryItem(name: "content[]", value: $0.id.value)
         }
         query.append(URLQueryItem(name: "force", value: "1"))
 

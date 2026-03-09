@@ -14,14 +14,14 @@ internal struct SearchView: View {
     @Binding var search: String
     @Binding var searchTab: Tab
     @Binding var selected: Bool
-    
+
     @State private var task: Task<(), Never>? = nil
-    
+
     @State private var tracks = [Track]()
     @State private var albums = [Album]()
     @State private var artists = [Artist]()
     @State private var playlists = [Playlist]()
-    
+
     var body: some View {
         List {
             if !artists.isEmpty {
@@ -30,7 +30,7 @@ internal struct SearchView: View {
                         .padding(.horizontal, 20)
                 }
             }
-            
+
             if !albums.isEmpty {
                 Section("section.albums") {
                     ForEach(albums) { album in
@@ -41,7 +41,7 @@ internal struct SearchView: View {
                     }
                 }
             }
-            
+
             if !playlists.isEmpty {
                 Section("section.playlists") {
                     ForEach(playlists) { playlist in
@@ -52,7 +52,7 @@ internal struct SearchView: View {
                     }
                 }
             }
-            
+
             if !tracks.isEmpty {
                 Section("section.tracks") {
                     ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
@@ -68,7 +68,7 @@ internal struct SearchView: View {
         .navigationTitle("title.search")
         .searchable(text: $search, isPresented: $selected, placement: .navigationBarDrawer(displayMode: .always), prompt: "search.placeholder")
         .searchScopes($searchTab, activation: .onSearchPresentation) {
-            Text("search.jellyfin")
+            Text("search.online")
                 .tag(Tab.online)
             Text("search.downloaded")
                 .tag(Tab.offline)
@@ -88,29 +88,29 @@ internal struct SearchView: View {
         }
         .modifier(AccountToolbarButtonModifier(requiredSize: .compact))
     }
-    
+
     private func fetchSearchResults(shouldReset: Bool) {
         let search = search.lowercased()
-        
+
         if shouldReset {
             tracks = []
             albums = []
             artists = []
             playlists = []
         }
-        
+
         task?.cancel()
         task = Task.detached(priority: .userInitiated) { [search] in
             async let tracks = searchTab.dataProvider.tracks(limit: 20, startIndex: 0, sortOrder: .lastPlayed, ascending: false, favoriteOnly: false, search: search).0
             async let albums = searchTab.dataProvider.albums(limit: 20, startIndex: 0, sortOrder: .lastPlayed, ascending: false, search: search).0
             async let artists = searchTab.dataProvider.artists(limit: 20, startIndex: 0, albumOnly: false, search: search).0
             async let playlists = searchTab.dataProvider.playlists(search: search)
-            
+
             try? await MainActor.withAnimation { [tracks, albums, artists, playlists] in
                 guard !Task.isCancelled else {
                     return
                 }
-                
+
                 self.tracks = Array(tracks.prefix(20))
                 self.albums = Array(albums.prefix(20))
                 self.artists = Array(artists.prefix(20))

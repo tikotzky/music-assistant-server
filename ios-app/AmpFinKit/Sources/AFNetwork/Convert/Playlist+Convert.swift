@@ -19,7 +19,7 @@ internal extension Playlist {
         let duration = from.contents?.reduce(0.0) { $0 + ($1.length ?? 0) } ?? 0
 
         self.init(
-            id: from.id,
+            id: from.id.value,
             name: from.title ?? "Unknown Playlist",
             cover: cover,
             favorite: from.is_favorite ?? false,

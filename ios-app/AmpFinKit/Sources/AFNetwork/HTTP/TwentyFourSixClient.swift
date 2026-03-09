@@ -22,14 +22,14 @@ public final class TwentyFourSixClient {
     public private(set) var _profilePin: String?
 
     let logger = Logger(subsystem: "io.rfk.ampfin", category: "HTTP")
-    static let defaults = AFKIT_ENABLE_ALL_FEATURES ? UserDefaults(suiteName: "group.io.rfk.ampfin")! : UserDefaults.standard
+    static let defaults = AFKIT_ENABLE_ALL_FEATURES ? UserDefaults(suiteName: AFKIT_APP_GROUP)! : UserDefaults.standard
 
-    static let baseURL = URL(string: "https://24six.app/api/v3")!
-    static let platformKey = "production-ios-d8225f34"
-    static let apiMinorVersion = "11"
-    static let appVersion = "2.3.8"
-    static let osVersion = "26.1"
-    static let userAgent = "24Six/2.3.8 (app.tfs.prod; build:162; iOS 26.1.0) Alamofire/5.7.1"
+    public static let baseURL = URL(string: "https://24six.app/api/v3")!
+    public static let platformKey = "production-ios-d8225f34"
+    public static let apiMinorVersion = "11"
+    public static let appVersion = "2.3.8"
+    public static let osVersion = "26.1"
+    public static let userAgent = "24Six/2.3.8 (app.tfs.prod; build:162; iOS 26.1.0) Alamofire/5.7.1"
 
     private init(token: String?, deviceId: String?, deviceSerial: String?, email: String?, password: String?, profileId: String?, profilePin: String?) {
         if !AFKIT_ENABLE_ALL_FEATURES {

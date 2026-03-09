@@ -11,19 +11,19 @@ import AFFoundation
 
 public struct PersistenceManager {
     public let modelContainer: ModelContainer
-    
+
     private init() {
         let schema = Schema([
             OfflineTrack.self,
             OfflineAlbum.self,
             OfflinePlaylist.self,
-            
+
             OfflineLyrics.self,
             OfflinePlay.self,
             OfflineFavorite.self,
         ], version: .init(2, 0, 0))
-        
-        let modelConfiguration = ModelConfiguration("AmpFin_Migrated", schema: schema, isStoredInMemoryOnly: false, allowsSave: true, groupContainer: AFKIT_ENABLE_ALL_FEATURES ? .identifier("group.io.rfk.ampfin") : .none)
+
+        let modelConfiguration = ModelConfiguration("AmpFin_Migrated", schema: schema, isStoredInMemoryOnly: false, allowsSave: true, groupContainer: AFKIT_ENABLE_ALL_FEATURES ? .identifier(AFKIT_APP_GROUP) : .none)
         modelContainer = try! ModelContainer(for: schema, configurations: [modelConfiguration])
     }
 }

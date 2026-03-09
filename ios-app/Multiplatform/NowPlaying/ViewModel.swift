@@ -7,7 +7,6 @@
 
 import Foundation
 import SwiftUI
-import RFKVisuals
 import AmpFinKit
 import AFPlayback
 
@@ -15,143 +14,143 @@ internal extension NowPlaying {
     @Observable
     class ViewModel {
         // MARK: Presentation
-        
+
         @ObservationIgnored var namespace: Namespace.ID!
         @MainActor var _dragOffset: CGFloat
         @MainActor private var dragFinished: Bool
-        
+
         @MainActor private var _expanded: Bool
         @MainActor private var expandFinished: Bool
-        
+
         @MainActor var queueTab: QueueTab? = .queue
         @MainActor private(set) var currentTab: NowPlaying.Tab
-        
+
         // MARK: Current presentation state
-        
+
         @MainActor var mediaInfoToggled = false
         @MainActor var addToPlaylistTrack: Track?
-        
+
         // MARK: Sliders
-        
+
         @MainActor var seekDragging: Bool
         @MainActor var volumeDragging: Bool
         @MainActor var controlsDragging: Bool
-        
+
         // MARK: Background
-        
+
         @MainActor private(set) var colors: [Color]
         @MainActor private var extractedCoverItemID: String?
-        
+
         // MARK: Current state
-        
+
         @MainActor private(set) var source: AudioPlayer.PlaybackSource
         @MainActor private(set) var playbackInfo: PlaybackInfo?
-        
+
         @MainActor private(set) var playing: Bool
-        
+
         @MainActor private(set) var duration: Double
         @MainActor private(set) var currentTime: Double
-        
+
         @MainActor private(set) var history: [Track]
         @MainActor private(set) var nowPlaying: Track?
-        
+
         @MainActor private(set) var queue: [Track]
         @MainActor private(set) var infiniteQueue: [Track]?
-        
+
         @MainActor private(set) var buffering: Bool
-        
+
         @MainActor private(set) var shuffled: Bool
         @MainActor private(set) var repeatMode: RepeatMode
-        
+
         @MainActor private(set) var mediaInfo: Track.MediaInfo?
         @MainActor private(set) var outputRoute: AudioPlayer.AudioRoute
-        
+
         @MainActor private(set) var allowQueueLater: Bool
-        
+
         // MARK: Lyrics
-        
+
         @MainActor private(set) var lyrics: Track.Lyrics
         @MainActor private(set) var lyricsFetchFailed: Bool
-        
+
         @MainActor private(set) var activeLineIndex: Int
-        
+
         @MainActor private(set) var scrolling: Bool
         @MainActor private(set) var _controlsVisible: Bool
-        
+
         @ObservationIgnored private var scrollTimeout: Task<Void, Error>?
-        
+
         // MARK: Helper
-        
+
         @MainActor private(set) var notifyPlaying: Int
         @MainActor private(set) var notifyForwards: Int
         @MainActor private(set) var notifyBackwards: Int
-        
+
         @ObservationIgnored private var tokens = [Any]()
-        
+
         @MainActor
         init() {
             namespace = nil
             _dragOffset = .zero
             dragFinished = true
-            
+
             _expanded = false
             expandFinished = false
-            
+
             currentTab = .cover
-            
+
             mediaInfoToggled = false
             addToPlaylistTrack = nil
-            
+
             seekDragging = false
             volumeDragging = false
             controlsDragging = false
-            
+
             colors = []
-            
+
             source = AudioPlayer.current.source
-            
+
             playing = AudioPlayer.current.playing
-            
+
             duration = AudioPlayer.current.duration
             currentTime = AudioPlayer.current.currentTime
-            
+
             history = AudioPlayer.current.history
             nowPlaying = AudioPlayer.current.nowPlaying
             queue = AudioPlayer.current.queue
-            
+
             buffering = AudioPlayer.current.buffering
-            
+
             shuffled = AudioPlayer.current.shuffled
             repeatMode = AudioPlayer.current.repeatMode
-            
+
             mediaInfo = nil
             outputRoute = AudioPlayer.current.outputRoute
-            
+
             allowQueueLater = AudioPlayer.current.allowQueueLater
-            
+
             lyrics = [:]
             lyricsFetchFailed = false
-            
+
             activeLineIndex = 0
-            
+
             scrolling = true
             _controlsVisible = true
-            
+
             scrollTimeout = nil
-            
+
             notifyPlaying = 0
             notifyForwards = 0
             notifyBackwards = 0
-            
+
             setupObservers()
         }
     }
-    
+
     enum QueueTab: Hashable, Identifiable, Equatable, CaseIterable {
         case history
         case queue
         case infiniteQueue
-        
+
         var id: Self {
             self
         }
@@ -167,18 +166,18 @@ internal extension NowPlaying.ViewModel {
             if nowPlaying == nil {
                 return false
             }
-            
+
             return _expanded
         } set {
             if newValue {
                 dragOffset = 0
             }
-            
+
             _controlsVisible = true
             addToPlaylistTrack = nil
-            
+
             UIApplication.shared.isIdleTimerDisabled = newValue
-            
+
             if newValue {
                 withAnimation {
                     _expanded = true
@@ -193,14 +192,14 @@ internal extension NowPlaying.ViewModel {
             }
         }
     }
-    
+
     @MainActor
     var dragOffset: CGFloat {
         get {
             if !expanded || controlsDragging || _dragOffset < 2 {
                 return 0
             }
-            
+
             return _dragOffset
         }
         set {
@@ -214,49 +213,49 @@ internal extension NowPlaying.ViewModel {
                 if dragFinished {
                     dragFinished = false
                 }
-                
+
                 _dragOffset = newValue
             }
         }
     }
-    
+
     @MainActor
     var controlsVisible: Bool {
         guard currentTab == .lyrics && !lyricsFetchFailed && !lyrics.isEmpty else {
             return true
         }
-        
+
         return _controlsVisible
     }
-    
+
     @MainActor
     var backgroundCornerRadius: CGFloat {
         guard expanded else {
             return 16
         }
-        
+
         if dragOffset > 0 {
             return UIScreen.main.displayCornerRadius
         }
-        
+
         return 0
     }
-    
+
     @MainActor
     var playedPercentage: Double {
         currentTime / duration
     }
-    
+
     @MainActor
     var qualityText: String? {
         if let mediaInfo = mediaInfo {
             var result = [String]()
-            
+
             let formatter = NumberFormatter()
             formatter.numberStyle = .decimal
             formatter.maximumFractionDigits = 0
             formatter.usesGroupingSeparator = true
-            
+
             if mediaInfoToggled && (mediaInfo.bitDepth != nil || mediaInfo.sampleRate != nil) {
                 if let bitDepth = mediaInfo.bitDepth {
                     result.append(formatter.string(from: .init(value: bitDepth))!)
@@ -272,22 +271,22 @@ internal extension NowPlaying.ViewModel {
                     result.append(formatter.string(from: .init(value: bitrate / 1000))!)
                 }
             }
-            
+
             if result.isEmpty {
                 return nil
             }
-            
+
             return result.joined(separator: " - ")
         }
-        
+
         return nil
     }
-    
+
     @MainActor
     var lyricsKeys: [Double] {
         Array(lyrics.keys).sorted(by: <)
     }
-    
+
     @MainActor
     var lyricsLoaded: Bool {
         !lyrics.isEmpty && !lyricsKeys.isEmpty
@@ -302,30 +301,30 @@ private extension NowPlaying.ViewModel {
         for token in tokens {
             NotificationCenter.default.removeObserver(token)
         }
-        
+
         tokens = []
-        
+
         tokens.append(NotificationCenter.default.addObserver(forName: AudioPlayer.sourceDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in
                 self?.source = AudioPlayer.current.source
             }
         })
-        
+
         tokens.append(NotificationCenter.default.addObserver(forName: AudioPlayer.trackDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
             Task {
                 await MainActor.withAnimation { [weak self] in
                     let nowPlaying = self?.nowPlaying
-                    
+
                     self?.mediaInfo = nil
                     self?.nowPlaying = AudioPlayer.current.nowPlaying
-                    
+
                     if nowPlaying == nil && self?.nowPlaying != nil {
                         self?.expanded = true
                     } else if self?.nowPlaying == nil {
                         self?.expanded = false
                     }
                 }
-                
+
                 await withTaskGroup(of: Void.self) {
                     // MARK: Fetch media info
                     $0.addTask { await self?.updateMediaInfo() }
@@ -337,19 +336,19 @@ private extension NowPlaying.ViewModel {
                                     self?.colors = []
                                     self?.extractedCoverItemID = nil
                                 }
-                                
+
                                 return
                             }
-                            
+
                             let colors = RFKVisuals.brightnessExtremeFilter(dominantColors.map { $0.color }, threshold: 0.25)
-                            
+
                             let extractedCoverItemID = await self?.extractedCoverItemID
                             let itemID = await self?.nowPlaying?.id
-                            
+
                             guard !Task.isCancelled && extractedCoverItemID != itemID else {
                                 return
                             }
-                            
+
                             await MainActor.withAnimation { [colors, weak self] in
                                 self?.colors = colors
                                 self?.extractedCoverItemID = itemID
@@ -362,28 +361,28 @@ private extension NowPlaying.ViewModel {
                             self?.lyrics = [:]
                             self?.setActiveLine(0)
                         }
-                        
+
                         let trackId = AudioPlayer.current.nowPlaying?.id
-                        
+
                         await MainActor.withAnimation { [weak self] in
                             self?.lyricsFetchFailed = trackId == nil
                         }
-                        
+
                         guard let trackId else {
                             return
                         }
-                        
+
                         var lyrics = try? OfflineManager.shared.lyrics(trackId: trackId, allowUpdate: true)
-                        
+
                         if lyrics == nil {
                             lyrics = try? await JellyfinClient.shared.lyrics(trackId: trackId)
                         }
-                        
+
                         await MainActor.withAnimation { [lyrics, weak self] in
                             self?.lyricsFetchFailed = lyrics == nil
                             self?.lyrics = lyrics ?? [:]
                         }
-                        
+
                         self?.setActiveLine(0)
                         self?.updateLyricsIndex()
                     }
@@ -396,7 +395,7 @@ private extension NowPlaying.ViewModel {
                 self?.notifyPlaying += 1
             }
         })
-        
+
         tokens.append(NotificationCenter.default.addObserver(forName: AudioPlayer.bufferingDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.buffering = AudioPlayer.current.buffering
@@ -407,12 +406,12 @@ private extension NowPlaying.ViewModel {
                 self?.playbackInfo = AudioPlayer.current.playbackInfo
             }
         })
-        
+
         tokens.append(NotificationCenter.default.addObserver(forName: AudioPlayer.timeDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.duration = AudioPlayer.current.duration
                 self?.currentTime = AudioPlayer.current.currentTime
-                
+
                 self?.updateLyricsIndex()
             }
         })
@@ -422,13 +421,13 @@ private extension NowPlaying.ViewModel {
                     self?.history = AudioPlayer.current.history
                     self?.queue = AudioPlayer.current.queue
                     self?.infiniteQueue = AudioPlayer.current.infiniteQueue
-                    
+
                     self?.allowQueueLater = AudioPlayer.current.allowQueueLater
-                    
+
                     if self?.queue.isEmpty == true && self?.history.isEmpty == true && self?.infiniteQueue?.isEmpty ?? true {
                         self?.queueTab = .queue
                     }
-                    
+
                     self?.shuffled = AudioPlayer.current.shuffled
                     self?.repeatMode = AudioPlayer.current.repeatMode
                 }
@@ -442,19 +441,19 @@ private extension NowPlaying.ViewModel {
                 }
             }
         })
-        
+
         tokens.append(NotificationCenter.default.addObserver(forName: AudioPlayer.bitrateDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.updateMediaInfo()
             }
         })
-        
+
         tokens.append(NotificationCenter.default.addObserver(forName: AudioPlayer.routeDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.outputRoute = AudioPlayer.current.outputRoute
             }
         })
-        
+
         tokens.append(NotificationCenter.default.addObserver(forName: AudioPlayer.forwardsNotification, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.notifyForwards += 1
@@ -466,10 +465,10 @@ private extension NowPlaying.ViewModel {
             }
         })
     }
-    
+
     func updateMediaInfo() async {
         let mediaInfo = await AudioPlayer.current.mediaInfo
-        
+
         await MainActor.withAnimation {
             self.mediaInfo = mediaInfo
             self.mediaInfoToggled = mediaInfo?.lossless ?? false
@@ -483,7 +482,7 @@ internal extension NowPlaying.ViewModel {
     func selectTab(_ tab: NowPlaying.Tab) {
         Task { @MainActor in
             _controlsVisible = true
-            
+
             withAnimation(.bouncy) {
                 if currentTab == tab {
                     currentTab = .cover
@@ -491,7 +490,7 @@ internal extension NowPlaying.ViewModel {
                     currentTab = tab
                 }
             }
-            
+
             updateLyricsIndex()
             startScrollTimer()
         }
@@ -506,44 +505,44 @@ internal extension NowPlaying.ViewModel {
         if scrolling && !controlsDragging {
             return
         }
-        
+
         withAnimation(.spring) {
             proxy.scrollTo(activeLineIndex, anchor: anchor)
         }
     }
-    
+
     func didInteract() {
         Task { @MainActor in
             guard currentTab == .lyrics && !controlsDragging else {
                 return
             }
-            
+
             withAnimation {
                 scrolling = true
                 _controlsVisible = true
             }
         }
-        
+
         startScrollTimer()
     }
-    
+
     func startScrollTimer() {
         scrollTimeout?.cancel()
         scrollTimeout = Task {
             try await Task.sleep(nanoseconds: UInt64(4) * NSEC_PER_SEC)
             try Task.checkCancellation()
-            
+
             guard await controlsDragging == false, await currentTab == .lyrics else {
                 return
             }
-            
+
             await MainActor.withAnimation {
                 self._controlsVisible = false
                 self.scrolling = false
             }
         }
     }
-    
+
     func setActiveLine(_ index: Int) {
         Task { @MainActor in
             withAnimation(.spring) {
@@ -557,9 +556,9 @@ internal extension NowPlaying.ViewModel {
                 setActiveLine(0)
                 return
             }
-            
+
             let currentTime = AudioPlayer.current.currentTime
-            
+
             if let index = lyricsKeys.lastIndex(where: { $0 <= currentTime }) {
                 setActiveLine(index)
             } else {

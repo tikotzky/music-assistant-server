@@ -12,32 +12,32 @@ import AFFoundation
 @Model
 final internal class OfflineTrackV2 {
     @Attribute(.unique)
-    let id: String
-    let name: String
-    
-    let released: Date?
-    
-    let album: Track.OfflineReducedAlbum
-    let artists: [Item.OfflineReducedArtist]
-    
+    var id: String
+    var name: String
+
+    var released: Date?
+
+    var album: Track.OfflineReducedAlbum
+    var artists: [Item.OfflineReducedArtist]
+
     var favorite: Bool
-    let runtime: Double
-    
+    var runtime: Double
+
     var container: Container!
     var downloadId: Int?
-    
+
     var lastPlayed: Date?
-    
+
     init(id: String, name: String, released: Date?, album: Track.OfflineReducedAlbum, artists: [Item.OfflineReducedArtist], favorite: Bool, runtime: Double, downloadId: Int? = nil) {
         self.id = id
         self.name = name
-        self.album = album
         self.released = released
+        self.album = album
         self.artists = artists
         self.favorite = favorite
         self.downloadId = downloadId
         self.runtime = runtime
-        
+
         container = nil
     }
 }

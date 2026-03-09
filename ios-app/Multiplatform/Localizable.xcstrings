@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "24six Account" : {
+
+    },
+    "24six API v3" : {
+
+    },
     "account" : {
       "localizations" : {
         "de" : {
@@ -194,6 +200,7 @@
       }
     },
     "account.server %@ %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -481,6 +488,12 @@
         }
       }
     },
+    "Choose Profile" : {
+
+    },
+    "Continue" : {
+
+    },
     "done" : {
       "localizations" : {
         "de" : {
@@ -577,18 +590,21 @@
         }
       }
     },
+    "Enter PIN" : {
+
+    },
     "error.unavailable.text" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bitte stelle sicher, dass du mit dem Internet verbunden bist und dein Gerät eine Verbindung zu deiner Jellyfin-Instanz herstellen kann."
+            "value" : "Bitte stelle sicher, dass du mit dem Internet verbunden bist und dein Gerät eine Verbindung zu 24six herstellen kann."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "To access Jellyfin features, please ensure your device is connected to the internet and can reach your Jellyfin instance."
+            "value" : "To access 24six, please ensure your device is connected to the internet."
           }
         }
       }
@@ -658,7 +674,7 @@
       }
     },
     "home.recentlyAdded" : {
-      "comment" : "Albums recently added to the Jellyfin server",
+      "comment" : "Albums recently added to 24six",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -705,6 +721,9 @@
           }
         }
       }
+    },
+    "Login failed. Please check your PIN." : {
+
     },
     "login.customHTTPHeaders" : {
       "localizations" : {
@@ -802,6 +821,9 @@
         }
       }
     },
+    "login.email" : {
+
+    },
     "login.error.failed" : {
       "localizations" : {
         "de" : {
@@ -819,17 +841,18 @@
       }
     },
     "login.error.server" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jellyfin Instanz nicht gefunden."
+            "value" : "24six nicht gefunden."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jellyfin instance not found."
+            "value" : "24six not found."
           }
         }
       }
@@ -888,34 +911,36 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mit Jellyfin anmelden"
+            "value" : "Mit 24six anmelden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Login with Jellyfin"
+            "value" : "Login with 24six"
           }
         }
       }
     },
     "login.quickConnect.description" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Benötigt Jellyfin 10.9+"
+            "value" : "24six erforderlich"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Requires Jellyfin 10.9+"
+            "value" : "Requires 24six"
           }
         }
       }
     },
     "login.quickConnect.help" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -932,6 +957,7 @@
       }
     },
     "login.quickConnect.link" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -948,6 +974,7 @@
       }
     },
     "login.quickConnect.title" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -964,6 +991,7 @@
       }
     },
     "login.quickConnect.unavailable.title" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -980,6 +1008,7 @@
       }
     },
     "login.server" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1028,6 +1057,7 @@
       }
     },
     "login.username" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1044,6 +1074,7 @@
       }
     },
     "login.version %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1176,13 +1207,13 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Es kann keine Verbindung zu deiner Jellyfin Instanz hergestellt werden. Überprüfe die Verbindung."
+            "value" : "Es kann keine Verbindung zu 24six hergestellt werden. Überprüfe die Verbindung."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Failed to establish a connection to your Jellyfin instance. Please verify your network connection and try again."
+            "value" : "Failed to establish a connection to 24six. Please verify your network connection and try again."
           }
         }
       }
@@ -1218,6 +1249,12 @@
           }
         }
       }
+    },
+    "PIN" : {
+
+    },
+    "PIN Required" : {
+
     },
     "placeholder" : {
       "localizations" : {
@@ -1840,13 +1877,13 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mit Jellyfin-Server verbinden"
+            "value" : "Mit 24six verbinden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Connect to your Jellyfin instance"
+            "value" : "Connect to 24six"
           }
         }
       }
@@ -2012,19 +2049,19 @@
         }
       }
     },
-    "search.jellyfin" : {
-      "comment" : "Search the Jellyfin server",
+    "search.online" : {
+      "comment" : "Search the 24six catalog",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jellyfin"
+            "value" : "24six"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jellyfin"
+            "value" : "24six"
           }
         }
       }
@@ -2124,6 +2161,9 @@
           }
         }
       }
+    },
+    "Select Profile" : {
+
     },
     "shuffle" : {
       "localizations" : {
@@ -2556,6 +2596,9 @@
           }
         }
       }
+    },
+    "This profile requires a PIN to access." : {
+
     },
     "title.albumArtists" : {
       "localizations" : {

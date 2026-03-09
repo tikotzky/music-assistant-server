@@ -11,14 +11,16 @@ import AFPlayback
 import AVKit
 
 extension NowPlaying {
+    static let showAirPlayPickerNotification = Notification.Name("NowPlaying.showAirPlayPicker")
+
     struct Buttons: View {
         @Environment(\.horizontalSizeClass) private var horizontalSizeClass
         @Environment(ViewModel.self) private var viewModel
-        
+
         private var isCompact: Bool {
             horizontalSizeClass == .compact
         }
-        
+
         @ViewBuilder private var lyricsButton: some View {
             Button {
                 viewModel.selectTab(.lyrics)
@@ -41,7 +43,7 @@ extension NowPlaying {
         @ViewBuilder private var queueButton: some View {
             Menu {
                 Toggle("shuffle", systemImage: "shuffle", isOn: .init(get: { viewModel.shuffled }, set: { AudioPlayer.current.shuffled = $0 }))
-                
+
                 Menu {
                     ForEach(RepeatMode.allCases.filter { AudioPlayer.current.infiniteQueue != nil || $0 != .infinite }) { repeatMode in
                         Toggle(isOn: .init(get: { viewModel.repeatMode == repeatMode }, set: { _ in AudioPlayer.current.repeatMode = repeatMode })) {
@@ -75,64 +77,58 @@ extension NowPlaying {
             }
             .padding(-12)
         }
-        
+
+        @ViewBuilder private var airPlayIcon: some View {
+            Label("output", systemImage: viewModel.outputRoute.icon)
+                .labelStyle(.iconOnly)
+                .contentShape(.rect)
+                .contentTransition(.symbolEffect(.replace.byLayer.downUp))
+                .foregroundStyle(.thinMaterial)
+                .modifier(HoverEffectModifier(padding: 4))
+        }
+
         var body: some View {
             HStack(alignment: .center) {
                 if viewModel.source == .local {
                     if isCompact {
                         Spacer()
-                        
+
                         lyricsButton
                             .frame(width: 75)
-                        
+
                         Spacer()
-                        
-                        Button {
-                            AirPlay.shared.presentPicker()
-                        } label: {
-                            Label("output", systemImage: viewModel.outputRoute.icon)
-                                .labelStyle(.iconOnly)
-                                .contentShape(.rect)
-                                .contentTransition(.symbolEffect(.replace.byLayer.downUp))
-                        }
-                        .buttonStyle(SymbolButtonStyle(active: false))
-                        .modifier(HoverEffectModifier(padding: 4))
-                        .frame(width: 75)
-                        .padding(12)
-                        .onTapGesture {
-                            AirPlay.shared.presentPicker()
-                        }
-                        .padding(-12)
-                        .overlay(alignment: .bottom) {
-                            if viewModel.outputRoute.showLabel {
-                                Text(viewModel.outputRoute.name)
-                                    .lineLimit(1)
-                                    .font(.caption2.smallCaps())
-                                    .foregroundStyle(.thinMaterial)
-                                    .offset(y: 12)
-                                    .fixedSize()
+
+                        airPlayIcon
+                            .frame(width: 75)
+                            .overlay {
+                                AirPlayRoutePickerOverlay()
                             }
-                        }
-                        
+                            .overlay(alignment: .bottom) {
+                                if viewModel.outputRoute.showLabel {
+                                    Text(viewModel.outputRoute.name)
+                                        .lineLimit(1)
+                                        .font(.caption2.smallCaps())
+                                        .foregroundStyle(.thinMaterial)
+                                        .offset(y: 12)
+                                        .fixedSize()
+                                }
+                            }
+
                         Spacer()
-                        
+
                         queueButton
                             .frame(width: 75)
-                        
+
                         Spacer()
                     } else if horizontalSizeClass == .regular {
                         HStack(spacing: 4) {
                             Button {
-                                AirPlay.shared.presentPicker()
+                                NotificationCenter.default.post(name: NowPlaying.showAirPlayPickerNotification, object: nil)
                             } label: {
-                                Label("output", systemImage: viewModel.outputRoute.icon)
-                                    .labelStyle(.iconOnly)
-                                    .contentShape(.rect)
-                                    .contentTransition(.symbolEffect(.replace.byLayer.downUp))
+                                airPlayIcon
                             }
-                            .buttonStyle(SymbolButtonStyle(active: false))
-                            .modifier(HoverEffectModifier(padding: 4))
-                            
+                            .buttonStyle(.plain)
+
                             if viewModel.outputRoute.showLabel {
                                 Text(viewModel.outputRoute.name)
                                     .lineLimit(1)
@@ -140,20 +136,20 @@ extension NowPlaying {
                                     .foregroundStyle(.thinMaterial)
                             }
                         }
-                        
+
                         Spacer()
-                        
+
                         lyricsButton
                             .padding(.horizontal, 16)
                         queueButton
                     }
                 } else if viewModel.source == .jellyfinRemote {
                     Spacer()
-                    
+
                     lyricsButton
-                    
+
                     Spacer()
-                    
+
                     Button {
                         AudioPlayer.current.shuffled.toggle()
                     } label: {
@@ -167,9 +163,9 @@ extension NowPlaying {
                         AudioPlayer.current.shuffled.toggle()
                     }
                     .padding(-12)
-                    
+
                     Spacer()
-                    
+
                     Button {
                         AudioPlayer.current.repeatMode = viewModel.repeatMode.next
                     } label: {
@@ -183,7 +179,7 @@ extension NowPlaying {
                         AudioPlayer.current.repeatMode = viewModel.repeatMode.next
                     }
                     .padding(-12)
-                    
+
                     Spacer()
                 }
             }
@@ -193,21 +189,14 @@ extension NowPlaying {
     }
 }
 
-private struct AirPlay {
-    let routePickerView = AVRoutePickerView()
-    
-    private init() {}
-    
-    func presentPicker() {
-        for view in routePickerView.subviews {
-            guard let button = view as? UIButton else {
-                continue
-            }
-            
-            button.sendActions(for: .touchUpInside)
-            break
-        }
+/// Transparent overlay that directly embeds an AVRoutePickerView for compact layout (no fullScreenCover).
+private struct AirPlayRoutePickerOverlay: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.tintColor = UIColor(white: 1, alpha: 0.005)
+        picker.activeTintColor = UIColor(white: 1, alpha: 0.005)
+        return picker
     }
-    
-    static let shared = AirPlay()
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }

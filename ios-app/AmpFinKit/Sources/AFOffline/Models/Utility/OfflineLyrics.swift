@@ -12,9 +12,9 @@ import AFFoundation
 @Model
 final internal class OfflineLyricsV2 {
     @Attribute(.unique)
-    let trackIdentifier: String
-    let contents: Track.Lyrics
-    
+    var trackIdentifier: String
+    var contents: Track.Lyrics
+
     init(trackIdentifier: String, contents: Track.Lyrics) {
         self.trackIdentifier = trackIdentifier
         self.contents = contents

@@ -21,14 +21,14 @@ internal extension Album {
         }
 
         self.init(
-            id: from.id,
+            id: from.id.value,
             name: from.title ?? "Unknown Album",
             cover: cover,
             favorite: from.is_favorite ?? false,
             overview: nil,
             genres: [],
             releaseDate: releaseDate,
-            artists: from.artists?.map { ReducedArtist(id: $0.id, name: $0.name ?? "Unknown") } ?? [],
+            artists: from.artists?.map { ReducedArtist(id: $0.id.value, name: $0.name ?? "Unknown") } ?? [],
             playCount: 0,
             lastPlayed: nil)
     }

@@ -16,7 +16,7 @@ internal extension Artist {
         }
 
         self.init(
-            id: from.id,
+            id: from.id.value,
             name: from.name ?? "Unknown Artist",
             cover: cover,
             favorite: from.is_favorite ?? false,

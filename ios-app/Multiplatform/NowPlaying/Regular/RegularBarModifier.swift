@@ -8,30 +8,88 @@
 import SwiftUI
 import AmpFinKit
 import AFPlayback
+import AVKit
+
+/// Hidden route picker in the main window that triggers on notification.
+/// On Mac Catalyst, fullScreenCover views have broken coordinate translation for NSPopover,
+/// so the picker must live outside the fullScreenCover.
+private struct AirPlayRoutePickerTrigger: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .clear
+
+        let picker = AVRoutePickerView()
+        picker.tintColor = .clear
+        picker.activeTintColor = .clear
+        picker.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(picker)
+        NSLayoutConstraint.activate([
+            picker.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            picker.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        context.coordinator.routePickerView = picker
+        context.coordinator.startListening()
+
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    class Coordinator {
+        var routePickerView: AVRoutePickerView?
+        private var token: Any?
+
+        func startListening() {
+            token = NotificationCenter.default.addObserver(
+                forName: NowPlaying.showAirPlayPickerNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.triggerPicker()
+            }
+        }
+
+        private func triggerPicker() {
+            guard let picker = routePickerView else { return }
+            for subview in picker.subviews {
+                guard let button = subview as? UIButton else { continue }
+                button.sendActions(for: .touchUpInside)
+                break
+            }
+        }
+
+        deinit {
+            if let token { NotificationCenter.default.removeObserver(token) }
+        }
+    }
+}
 
 internal extension NowPlaying {
     struct RegularBarModifier: ViewModifier {
         @Environment(NowPlaying.ViewModel.self) private var viewModel
         @Environment(\.libraryDataProvider) private var dataProvider
-        
+
         @State private var width: CGFloat = .zero
         @State private var adjust: CGFloat = .zero
-        
+
         func body(content: Content) -> some View {
             @Bindable var viewModel = viewModel
-            
+
             content
                 .safeAreaInset(edge: .bottom) {
                     if let currentTrack = viewModel.nowPlaying {
                         HStack(spacing: 8) {
                             ItemImage(cover: currentTrack.cover)
                                 .frame(width: 48, height: 48)
-                            
+
                             Text(currentTrack.name)
                                 .lineLimit(1)
-                            
+
                             Spacer()
-                            
+
                             Button {
                                 AudioPlayer.current.shuffled.toggle()
                             } label: {
@@ -42,7 +100,7 @@ internal extension NowPlaying {
                             }
                             .buttonStyle(SymbolButtonStyle(active: viewModel.shuffled, heavy: true))
                             .modifier(HoverEffectModifier(padding: 4))
-                            
+
                             Button {
                                 AudioPlayer.current.rewind()
                             } label: {
@@ -52,7 +110,7 @@ internal extension NowPlaying {
                             }
                             .font(.title3)
                             .modifier(HoverEffectModifier())
-                            
+
                             Group {
                                 if viewModel.buffering {
                                     ProgressView()
@@ -70,7 +128,7 @@ internal extension NowPlaying {
                             .font(.title)
                             .modifier(HoverEffectModifier())
                             .transition(.blurReplace)
-                            
+
                             Button {
                                 AudioPlayer.current.advance()
                             } label: {
@@ -80,7 +138,7 @@ internal extension NowPlaying {
                             }
                             .font(.title3)
                             .modifier(HoverEffectModifier())
-                            
+
                             Button {
                                 AudioPlayer.current.repeatMode = viewModel.repeatMode.next
                             } label: {
@@ -107,6 +165,11 @@ internal extension NowPlaying {
                                 .padding()
                         }
                         .clipShape(.rect(cornerRadius: 16, style: .continuous))
+                        .overlay(alignment: .leading) {
+                            AirPlayRoutePickerTrigger()
+                                .frame(width: 1, height: 1)
+                                .padding(.leading, 10)
+                        }
                         .shadow(color: .black.opacity(0.25), radius: 20)
                         .padding(.bottom, 10)
                         .padding(.horizontal, 10)
@@ -122,6 +185,7 @@ internal extension NowPlaying {
                         }
                         .fullScreenCover(isPresented: $viewModel.expanded) {
                             RegularView()
+                                .environment(viewModel)
                                 .ignoresSafeArea(edges: .all)
                         }
                     }

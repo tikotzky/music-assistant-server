@@ -18,8 +18,7 @@ internal struct ContentView: View {
     @Namespace private var namespace
     @Default(.migratedToNewDatastore) private var migratedToNewDatastore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    @State private var nowPlayingViewModel = NowPlaying.ViewModel()
+    @Environment(NowPlaying.ViewModel.self) private var nowPlayingViewModel
 
     private var navigationController: some View {
         Group {
@@ -36,6 +35,7 @@ internal struct ContentView: View {
     }
 
     var body: some View {
+        Group {
         if !migratedToNewDatastore {
             ContentUnavailableView("migrating", systemImage: "slider.horizontal.2.rectangle.and.arrow.triangle.2.circlepath", description: Text("migrating.description"))
                 .symbolEffect(.pulse)
@@ -47,7 +47,6 @@ internal struct ContentView: View {
                 .sensoryFeedback(.selection, trigger: nowPlayingViewModel.notifyForwards)
                 .sensoryFeedback(.selection, trigger: nowPlayingViewModel.notifyPlaying)
                 .sensoryFeedback(.selection, trigger: nowPlayingViewModel.notifyBackwards)
-                .environment(nowPlayingViewModel)
                 .onContinueUserActivity(CSSearchableItemActionType) { activity in
                     guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else {
                         return
@@ -107,9 +106,11 @@ internal struct ContentView: View {
         } else {
             LoginView()
         }
+        }
     }
 }
 
 #Preview {
     ContentView()
+        .environment(NowPlaying.ViewModel())
 }

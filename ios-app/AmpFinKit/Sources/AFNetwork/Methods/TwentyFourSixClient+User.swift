@@ -18,7 +18,7 @@ public extension TwentyFourSixClient {
                 "password": password,
             ]))
 
-        return response.profiles.map { (id: $0.id, name: $0.name, pinRequired: $0.pin_required ?? false) }
+        return response.profiles.map { (id: $0.id.value, name: $0.name, pinRequired: $0.pin_required ?? false) }
     }
 
     /// Login with email, password, profile, and optional PIN.

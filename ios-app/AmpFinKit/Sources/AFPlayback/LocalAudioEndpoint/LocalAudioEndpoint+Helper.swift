@@ -122,10 +122,21 @@ internal extension LocalAudioEndpoint {
             avPlayerQueue.removeLast()
         }
 
-        // Fill queue
-        for track in expected[firstOutdatedIndex..<expected.count] {
-            audioPlayer.insert(avPlayerItem(track: track), after: nil)
-            avPlayerQueue.append(track.id)
+        // Fill queue asynchronously (resolve stream URLs before inserting)
+        let tracksToAdd = Array(expected[firstOutdatedIndex..<expected.count])
+        Task { [weak self] in
+            for track in tracksToAdd {
+                guard let self else { return }
+                // Skip if already in the queue (e.g. now playing inserted by startPlayback)
+                let alreadyQueued = await MainActor.run { self.avPlayerQueue.contains(track.id) }
+                guard !alreadyQueued else { continue }
+
+                let item = await self.avPlayerItemAsync(track: track)
+                await MainActor.run {
+                    self.audioPlayer.insert(item, after: nil)
+                    self.avPlayerQueue.append(track.id)
+                }
+            }
         }
     }
 

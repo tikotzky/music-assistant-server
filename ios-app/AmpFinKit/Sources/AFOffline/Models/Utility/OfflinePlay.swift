@@ -10,10 +10,10 @@ import SwiftData
 
 @Model
 final internal class OfflinePlayV2 {
-    let trackIdentifier: String
-    let position: Double
-    let date: Date
-    
+    var trackIdentifier: String
+    var position: Double
+    var date: Date
+
     public init(trackIdentifier: String, position: Double, date: Date) {
         self.trackIdentifier = trackIdentifier
         self.position = position
