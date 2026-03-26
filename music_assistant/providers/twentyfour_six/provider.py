@@ -74,7 +74,7 @@ class TwentyFourSixProvider(MusicProvider):
     async def unload(self, is_removed: bool = False) -> None:
         """Handle unload/close of the provider."""
         if is_removed:
-            self.update_config_value(CONF_SESSION_DATA, "")
+            self._update_config_value(CONF_SESSION_DATA, "")
         await self.api.close()
 
     def update_session_data(self, session_data: str) -> None:
@@ -82,21 +82,21 @@ class TwentyFourSixProvider(MusicProvider):
 
         :param session_data: JSON-encoded session data to store.
         """
-        self.update_config_value(CONF_SESSION_DATA, session_data, encrypted=True)
+        self._update_config_value(CONF_SESSION_DATA, session_data, encrypted=True)
 
     def update_device_id(self, device_id: str) -> None:
         """Persist device ID to the config store.
 
         :param device_id: Device identifier to store.
         """
-        self.update_config_value(CONF_DEVICE_ID, device_id)
+        self._update_config_value(CONF_DEVICE_ID, device_id)
 
     def update_device_serial(self, device_serial: str) -> None:
         """Persist device serial to the config store.
 
         :param device_serial: Device serial identifier to store.
         """
-        self.update_config_value(CONF_DEVICE_SERIAL, device_serial)
+        self._update_config_value(CONF_DEVICE_SERIAL, device_serial)
 
     @use_cache(3600)
     async def search(
@@ -356,7 +356,7 @@ class TwentyFourSixProvider(MusicProvider):
         else:
             await self.api.api_delete(endpoint)
 
-    async def create_playlist(self, name: str) -> Playlist:
+    async def create_playlist(self, name: str, media_types: set[MediaType]) -> Playlist:
         """Create a new playlist on the provider."""
         data = await self.api.api_post("music/playlist", params={"name": name})
         playlist_data = data.get("playlist", data)
