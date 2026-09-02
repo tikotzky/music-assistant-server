@@ -292,7 +292,7 @@ def parse_podcast_episode(
         episode.metadata.images = UniqueList([_image(provider, img_url)])
     if description := data.get("description"):
         episode.metadata.description = str(description)
-    if release_date := parse_release_date(data):
+    if release_date := parse_release_date(data, created_fallback=True):
         episode.metadata.release_date = release_date
     episode.favorite = bool(data.get("is_favorite"))
     return episode
@@ -327,14 +327,19 @@ def parse_radio(provider: TwentyFourSixProvider, data: dict[str, Any]) -> Radio:
     return radio
 
 
-def parse_release_date(data: dict[str, Any]) -> datetime | None:
+def parse_release_date(data: dict[str, Any], created_fallback: bool = False) -> datetime | None:
     """
     Parse the release date of a 24six object, if any.
 
     :param data: Raw API data carrying an optional ``release_date`` field.
+    :param created_fallback: Use the ``created_at`` timestamp when there is no release date
+        (podcast episodes only carry the former).
     """
     release_date = data.get("release_date")
     if not release_date:
+        if created_fallback and data.get("created_at"):
+            with suppress(ValueError, TypeError, OverflowError):
+                return datetime.fromtimestamp(float(data["created_at"]), tz=UTC)
         return None
     parsed: datetime | None = None
     with suppress(ValueError, TypeError):

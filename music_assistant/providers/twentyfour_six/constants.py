@@ -43,6 +43,8 @@ MAX_PAGES: Final[int] = 100
 PAGE_SIZE: Final[int] = 200
 # Items fetched for a single recommendation row
 RECOMMENDATION_ROW_SIZE: Final[int] = 50
+# Most popular tracks returned for an artist
+TOP_TRACKS_LIMIT: Final[int] = 50
 
 # Fraction of an episode that must be played before it counts as fully played
 FULLY_PLAYED_THRESHOLD: Final[float] = 0.95
