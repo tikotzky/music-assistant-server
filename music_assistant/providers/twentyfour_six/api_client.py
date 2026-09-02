@@ -12,6 +12,7 @@ import aiohttp
 from music_assistant_models.errors import (
     LoginFailed,
     MediaNotFoundError,
+    MusicAssistantError,
     ResourceTemporarilyUnavailable,
 )
 
@@ -238,7 +239,7 @@ class TwentyFourSixAPIClient:
         :param seconds: Total seconds listened.
         :param current: Current playback position in seconds.
         """
-        with contextlib.suppress(LoginFailed, MediaNotFoundError, ResourceTemporarilyUnavailable):
+        with contextlib.suppress(MusicAssistantError):
             await self._request(
                 "POST",
                 f"content/{item_id}/log",
@@ -404,7 +405,13 @@ class TwentyFourSixAPIClient:
             text = await response.text()
             self.logger.warning("API error %s on %s", response.status, endpoint)
             self.logger.debug("API error body: %s", text[:_MAX_ERROR_LOG])
-            raise ResourceTemporarilyUnavailable(f"API error {response.status}")
+            if response.status >= 500:
+                raise ResourceTemporarilyUnavailable(f"API error {response.status}")
+            # a client error (validation, method not allowed, ...) will not get better
+            # by retrying, so fail right away with the server's own message
+            raise MusicAssistantError(
+                f"API error {response.status} on {endpoint}: {_error_message(text)}"
+            )
         if response.status == 204:
             return {}
         try:
@@ -419,3 +426,12 @@ class TwentyFourSixAPIClient:
         if not isinstance(result, dict):
             raise ResourceTemporarilyUnavailable(f"Unexpected response from {endpoint}")
         return result
+
+
+def _error_message(body: str) -> str:
+    """Return the human readable message of an API error body, or the raw (trimmed) body."""
+    with contextlib.suppress(json.JSONDecodeError, AttributeError, TypeError):
+        parsed = json.loads(body)
+        if isinstance(parsed, dict) and parsed.get("message"):
+            return str(parsed["message"])
+    return body[:200]
