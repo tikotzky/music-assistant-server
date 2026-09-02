@@ -176,8 +176,17 @@ async def test_recommendation_rows_and_items(provider: TwentyFourSixProvider) ->
     rows = await provider.get_recommendations()
     row_ids = [row.item_id for row in rows]
     assert row_ids[:2] == ["banners", "by24Six"]
-    assert {"newAlbums", "trending", "recent", "newPodcasts"} <= set(row_ids)
+    assert {"newAlbums", "stories", "trending", "recent", "newPodcasts"} <= set(row_ids)
     assert all(row.items == [] for row in rows)
+    assert all(row.translation_key for row in rows)
+
+    # rows for content the profile may not access are left out
+    provider.api.profile = {"allowed": {"stories": False, "podcast": False, "music": True}}
+    row_ids = [row.item_id for row in await provider.get_recommendations()]
+    assert "stories" not in row_ids
+    assert "newPodcasts" not in row_ids
+    assert "newAlbums" in row_ids
+    provider.api.profile = {}
 
     _api_get(provider).return_value = {
         "data": [
@@ -254,6 +263,33 @@ async def test_browse_categories(provider: TwentyFourSixProvider) -> None:
     albums = await provider.browse("twentyfour_six--test://category/3")
     _api_get(provider).assert_awaited_with("music/category/3")
     assert [item.item_id for item in albums] == ["22"]
+
+
+async def test_browse_stories(provider: TwentyFourSixProvider) -> None:
+    """Stories are a root folder listing the story albums, hidden without access."""
+    _api_get(provider).return_value = {
+        "data": [
+            {"id": 5, "type": "collection", "title": "Bedtime Tales", "contents": [{"id": 1}]}
+        ],
+        "meta": {"pagination": {"next_page": None}},
+    }
+    stories = await provider.browse("twentyfour_six--test://stories")
+    _api_get(provider).assert_awaited_once_with(
+        "music/collection",
+        params={"per_page": "200", "sort": "newStories", "with_contents": "0", "page": "1"},
+    )
+    assert [(type(item), item.item_id, item.name) for item in stories] == [
+        (Album, "5", "Bedtime Tales")
+    ]
+
+    music = cast("Any", provider.mass).music
+    for controller in ("artists", "albums", "tracks", "playlists", "podcasts", "radio"):
+        getattr(music, controller).library_items = AsyncMock(return_value=[])
+    root = cast("list[BrowseFolder]", await provider.browse("twentyfour_six--test://"))
+    assert [folder.item_id for folder in root][-2:] == ["categories", "stories"]
+    provider.api.profile = {"allowed": {"stories": False}}
+    root = cast("list[BrowseFolder]", await provider.browse("twentyfour_six--test://"))
+    assert "stories" not in [folder.item_id for folder in root]
 
 
 async def test_podcast_episodes_ranked_by_date(provider: TwentyFourSixProvider) -> None:
