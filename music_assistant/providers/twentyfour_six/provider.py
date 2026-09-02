@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
@@ -51,12 +52,15 @@ from .constants import (
     ENTITY_PLAYLIST,
     ENTITY_RADIO,
     HLS_AUDIO_FORMAT,
+    LISTENED_MIN_FRACTION,
+    LISTENED_MIN_SECONDS,
     MAX_PAGES,
     PAGE_SIZE,
     RADIO_METADATA_INTERVAL,
     RADIO_METADATA_MAX_INTERVAL,
     RECOMMENDATION_ROW_SIZE,
     RECOMMENDATION_ROWS,
+    SEED_HISTORY_SIZE,
     STORIES_PARAMS,
     TOP_TRACKS_LIMIT,
 )
@@ -112,6 +116,9 @@ class TwentyFourSixProvider(MusicProvider):
         # resume points handed out for podcast episodes, so a play that started
         # mid-way reports only the seconds listened since then
         self._resume_starts: dict[str, int] = {}
+        # tracks the listener stayed with, most recent first; they season the seeds of
+        # similar-track lookups the way the app sends its whole queue
+        self._listened: deque[str] = deque(maxlen=SEED_HISTORY_SIZE)
 
     @property
     def supported_media_types(self) -> set[MediaType]:
@@ -473,13 +480,9 @@ class TwentyFourSixProvider(MusicProvider):
         :param prov_track_id: The provider track id.
         :param limit: Maximum number of tracks to return.
         """
-        # the app's autoplay asks the AI-backed engine (ai=1) with the queue as seed; that
-        # engine ignores the limit and answers with a fixed batch, so trim it here
-        data = await self.api.api_post(
-            f"{CONTENT_TYPE_MUSIC}/content/recommended",
-            {"queue": [prov_track_id], "limit": limit, "ai": 1},
-        )
-        return [parse_track(self, item) for item in valid_items(data.get("data"))[:limit]]
+        recent = [track_id for track_id in self._listened if track_id != prov_track_id]
+        seeds = (prov_track_id, *recent[: SEED_HISTORY_SIZE - 1])
+        return await self._get_recommended_tracks(seeds, limit)
 
     @use_cache(3600 * 24, allow_expired_cache=True)
     async def get_similar_artists(self, prov_artist_id: str, limit: int = 25) -> list[Artist]:
@@ -564,6 +567,10 @@ class TwentyFourSixProvider(MusicProvider):
             return
         # an episode resumed mid-way was only listened to from its resume point
         started_at = self._resume_starts.pop(prov_item_id, 0)
+        if media_type == MediaType.TRACK and self._was_listened(position, media_item):
+            if prov_item_id in self._listened:
+                self._listened.remove(prov_item_id)
+            self._listened.appendleft(prov_item_id)
         await self.api.log_playback(
             item_id=prov_item_id, seconds=max(position - started_at, 0), current=position
         )
@@ -672,6 +679,22 @@ class TwentyFourSixProvider(MusicProvider):
             if parsed := self._parse_by_type(entry, row.content_type):
                 items.append(parsed)
         return items
+
+    @use_cache(3600)
+    async def _get_recommended_tracks(self, seeds: tuple[str, ...], limit: int) -> list[Track]:
+        """
+        Fetch and briefly cache the tracks 24six recommends after the given seed tracks.
+
+        :param seeds: The seed track ids, the track to continue from first.
+        :param limit: Maximum number of tracks to return.
+        """
+        # the app's autoplay asks the AI-backed engine (ai=1) with its queue as seeds; that
+        # engine ignores the limit and answers with a fixed batch, so trim it here
+        data = await self.api.api_post(
+            f"{CONTENT_TYPE_MUSIC}/content/recommended",
+            {"queue": list(seeds), "limit": limit, "ai": 1},
+        )
+        return [parse_track(self, item) for item in valid_items(data.get("data"))[:limit]]
 
     @use_cache(3600 * 24 * 30)
     async def _get_artist_data(self, prov_artist_id: str) -> dict[str, Any]:
@@ -962,6 +985,20 @@ class TwentyFourSixProvider(MusicProvider):
                 continue
             items.append(cast("MediaItemType", result))
         return items
+
+    @staticmethod
+    def _was_listened(position: int, media_item: MediaItemType) -> bool:
+        """
+        Return whether a finished play counts as listened to rather than skipped early.
+
+        :param position: The position in seconds the play ended at.
+        :param media_item: The played item, for its duration.
+        """
+        duration = int(getattr(media_item, "duration", 0) or 0)
+        threshold = LISTENED_MIN_SECONDS
+        if duration > 0:
+            threshold = min(threshold, int(duration * LISTENED_MIN_FRACTION))
+        return position >= threshold
 
     def _library_endpoint(self, media_type: MediaType, prov_item_id: str | None) -> str | None:
         """Return the library endpoint for an item, or None when unsupported."""

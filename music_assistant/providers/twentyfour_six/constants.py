@@ -49,6 +49,11 @@ PAGE_SIZE: Final[int] = 200
 RECOMMENDATION_ROW_SIZE: Final[int] = 50
 # Most popular tracks returned for an artist
 TOP_TRACKS_LIMIT: Final[int] = 50
+# Recently listened tracks sent along as seeds when asking for similar tracks (like the
+# app, which sends its queue), and what counts as listened rather than skipped
+SEED_HISTORY_SIZE: Final[int] = 10
+LISTENED_MIN_SECONDS: Final[int] = 30
+LISTENED_MIN_FRACTION: Final[float] = 0.25
 # Albums listed when browsing a category or the stories (some hold thousands)
 BROWSE_LIST_LIMIT: Final[int] = 400
 # Seconds until the first now-playing refresh of a playing radio station
