@@ -55,6 +55,9 @@
       "presents": {
         "name": "24six Presents"
       },
+      "new_releases": {
+        "name": "New Releases"
+      },
       "new_albums": {
         "name": "New Albums"
       },
@@ -81,6 +84,15 @@
       },
       "new_podcast_episodes": {
         "name": "New Podcast Episodes"
+      },
+      "continue_listening": {
+        "name": "Continue Listening"
+      },
+      "popular_podcasts": {
+        "name": "Popular Podcasts"
+      },
+      "trending_episodes": {
+        "name": "Trending Episodes"
       }
     }
   }
