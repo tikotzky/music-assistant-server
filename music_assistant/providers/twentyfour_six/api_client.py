@@ -137,6 +137,7 @@ class TwentyFourSixAPIClient:
             self.profile.get("name", "unknown"),
             self.profile.get("id", "unknown"),
         )
+        self.logger.debug("Profile content access: %s", self.profile.get("allowed"))
         await self._register_device()
 
     async def logout(self) -> None:
