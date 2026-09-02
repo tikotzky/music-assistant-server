@@ -23,7 +23,6 @@ SUPPORTED_FEATURES = {
     ProviderFeature.LIBRARY_PLAYLISTS,
     ProviderFeature.LIBRARY_PODCASTS,
     ProviderFeature.LIBRARY_RADIOS,
-    ProviderFeature.LIBRARY_ARTISTS_EDIT,
     ProviderFeature.LIBRARY_ALBUMS_EDIT,
     ProviderFeature.LIBRARY_TRACKS_EDIT,
     ProviderFeature.LIBRARY_PLAYLISTS_EDIT,
