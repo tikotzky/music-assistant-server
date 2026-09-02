@@ -1055,6 +1055,10 @@ class TwentyFourSixProvider(MusicProvider):
 
     def _library_endpoint(self, media_type: MediaType, prov_item_id: str | None) -> str | None:
         """Return the library endpoint for an item, or None when unsupported."""
+        if media_type == MediaType.ARTIST:
+            # the artist library is derived from the saved albums and tracks: adding an
+            # artist only marks it as favorite and removing it is not possible
+            return None
         content_type, entity = self._entity_for(media_type)
         if not entity or not prov_item_id:
             return None
