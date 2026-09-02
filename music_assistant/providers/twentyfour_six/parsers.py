@@ -22,7 +22,9 @@ from music_assistant_models.media_items import (
     UniqueList,
 )
 
-from music_assistant.helpers.util import infer_album_type, parse_title_and_version
+from music_assistant.helpers.datetime import from_iso_string, from_utc_timestamp
+from music_assistant.helpers.lyrics import convert_to_lrc_lyrics
+from music_assistant.helpers.util import infer_album_type, parse_title_and_version, try_parse_int
 
 from .constants import FULLY_PLAYED_THRESHOLD
 
@@ -42,14 +44,7 @@ def parse_artist(provider: TwentyFourSixProvider, data: dict[str, Any]) -> Artis
         item_id=artist_id,
         provider=provider.instance_id,
         name=data.get("name") or "",
-        provider_mappings={
-            ProviderMapping(
-                item_id=artist_id,
-                provider_domain=provider.domain,
-                provider_instance=provider.instance_id,
-                url=data.get("preview_url") or None,
-            )
-        },
+        provider_mappings={_provider_mapping(provider, artist_id, data)},
     )
     if img := data.get("img"):
         artist.metadata.images = UniqueList([_image(provider, img)])
@@ -73,23 +68,11 @@ def parse_album(provider: TwentyFourSixProvider, data: dict[str, Any]) -> Album:
         provider=provider.instance_id,
         name=name,
         version=version,
-        provider_mappings={
-            ProviderMapping(
-                item_id=album_id,
-                provider_domain=provider.domain,
-                provider_instance=provider.instance_id,
-                url=data.get("preview_url") or None,
-                audio_format=AudioFormat(content_type=ContentType.AAC),
-            )
-        },
+        provider_mappings={_provider_mapping(provider, album_id, data, audio=True)},
     )
-    release_date = parse_release_date(data)
-    if release_date:
+    if release_date := parse_release_date(data):
         album.year = release_date.year
         album.metadata.release_date = release_date
-    elif year_val := data.get("year"):
-        with suppress(ValueError, TypeError):
-            album.year = int(year_val)
 
     for artist_data in data.get("artists") or []:
         if artist_data and artist_data.get("id"):
@@ -131,15 +114,9 @@ def parse_track(
         version=version,
         duration=data.get("length") or data.get("duration") or 0,
         track_number=data.get("track_num") or 0,
-        disc_number=data.get("disc_num") or 0,
         provider_mappings={
-            ProviderMapping(
-                item_id=track_id,
-                provider_domain=provider.domain,
-                provider_instance=provider.instance_id,
-                url=data.get("preview_url") or None,
-                available=not data.get("unplayable", False),
-                audio_format=AudioFormat(content_type=ContentType.AAC),
+            _provider_mapping(
+                provider, track_id, data, audio=True, available=not data.get("unplayable")
             )
         },
     )
@@ -151,7 +128,9 @@ def parse_track(
         track.artists = UniqueList(fallback_artists)
 
     if collection_id := data.get("collection_id"):
-        track.album = _album_mapping(provider, str(collection_id), data.get("collection"))
+        track.album = _collection_mapping(
+            provider, str(collection_id), data.get("collection"), MediaType.ALBUM
+        )
 
     if img_url := _get_best_image(data):
         track.metadata.images = UniqueList([_image(provider, img_url)])
@@ -180,20 +159,10 @@ def parse_playlist(provider: TwentyFourSixProvider, data: dict[str, Any]) -> Pla
         provider=provider.instance_id,
         name=data.get("title") or "",
         is_editable=is_mine,
-        provider_mappings={
-            ProviderMapping(
-                item_id=playlist_id,
-                provider_domain=provider.domain,
-                provider_instance=provider.instance_id,
-                url=data.get("preview_url") or None,
-                is_unique=is_mine,
-            )
-        },
+        provider_mappings={_provider_mapping(provider, playlist_id, data, is_unique=is_mine)},
     )
-    if owner_profile := data.get("profile"):
-        playlist.owner = owner_profile.get("name") or "24six"
-    else:
-        playlist.owner = "24six"
+    owner_profile = data.get("profile")
+    playlist.owner = (owner_profile.get("name") if owner_profile else None) or "24six"
 
     if img_url := _get_best_image(data):
         playlist.metadata.images = UniqueList([_image(provider, img_url)])
@@ -216,15 +185,7 @@ def parse_podcast(provider: TwentyFourSixProvider, data: dict[str, Any]) -> Podc
         item_id=podcast_id,
         provider=provider.instance_id,
         name=data.get("title") or "",
-        provider_mappings={
-            ProviderMapping(
-                item_id=podcast_id,
-                provider_domain=provider.domain,
-                provider_instance=provider.instance_id,
-                url=data.get("preview_url") or None,
-                audio_format=AudioFormat(content_type=ContentType.AAC),
-            )
-        },
+        provider_mappings={_provider_mapping(provider, podcast_id, data, audio=True)},
     )
     publishers = [
         artist_data.get("name")
@@ -263,9 +224,10 @@ def parse_podcast_episode(
     collection_id = data.get("collection_id")
     if podcast is None:
         if not collection_id:
-            msg = f"Episode {episode_id} has no podcast reference"
-            raise ValueError(msg)
-        podcast = _podcast_mapping(provider, str(collection_id), data.get("collection"))
+            raise ValueError(f"Episode {episode_id} has no podcast reference")
+        podcast = _collection_mapping(
+            provider, str(collection_id), data.get("collection"), MediaType.PODCAST
+        )
     duration = int(data.get("length") or data.get("duration") or 0)
     episode = PodcastEpisode(
         item_id=episode_id,
@@ -274,15 +236,7 @@ def parse_podcast_episode(
         position=position,
         podcast=podcast,
         duration=duration,
-        provider_mappings={
-            ProviderMapping(
-                item_id=episode_id,
-                provider_domain=provider.domain,
-                provider_instance=provider.instance_id,
-                url=data.get("preview_url") or None,
-                audio_format=AudioFormat(content_type=ContentType.AAC),
-            )
-        },
+        provider_mappings={_provider_mapping(provider, episode_id, data, audio=True)},
     )
     resume_seconds = parse_resume_position(data)
     if resume_seconds is not None:
@@ -310,15 +264,7 @@ def parse_radio(provider: TwentyFourSixProvider, data: dict[str, Any]) -> Radio:
         item_id=radio_id,
         provider=provider.instance_id,
         name=data.get("title") or data.get("name") or "",
-        provider_mappings={
-            ProviderMapping(
-                item_id=radio_id,
-                provider_domain=provider.domain,
-                provider_instance=provider.instance_id,
-                url=data.get("preview_url") or None,
-                audio_format=AudioFormat(content_type=ContentType.AAC),
-            )
-        },
+        provider_mappings={_provider_mapping(provider, radio_id, data, audio=True)},
     )
     if img_url := _get_best_image(data):
         radio.metadata.images = UniqueList([_image(provider, img_url)])
@@ -339,15 +285,11 @@ def parse_release_date(data: dict[str, Any], created_fallback: bool = False) -> 
     if not release_date:
         if created_fallback and data.get("created_at"):
             with suppress(ValueError, TypeError, OverflowError):
-                return datetime.fromtimestamp(float(data["created_at"]), tz=UTC)
+                return from_utc_timestamp(float(data["created_at"]))
         return None
-    parsed: datetime | None = None
     with suppress(ValueError, TypeError):
-        parsed = datetime.fromisoformat(str(release_date))
-    if parsed is None:
-        with suppress(ValueError, TypeError):
-            parsed = datetime.strptime(str(release_date)[:10], "%Y-%m-%d").replace(tzinfo=UTC)
-    return _as_utc(parsed)
+        return _as_utc(from_iso_string(str(release_date)))
+    return None
 
 
 def parse_resume_position(data: dict[str, Any]) -> int | None:
@@ -364,8 +306,8 @@ def parse_resume_position(data: dict[str, Any]) -> int | None:
     for candidate in candidates:
         if candidate is None:
             continue
-        with suppress(ValueError, TypeError):
-            return max(int(float(candidate)), 0)
+        if (position := try_parse_int(candidate, None)) is not None:
+            return max(position, 0)
     return None
 
 
@@ -382,9 +324,9 @@ def parse_resume_timestamp(data: dict[str, Any]) -> datetime | None:
     if not timestamp:
         return None
     with suppress(ValueError, TypeError, OverflowError):
-        return datetime.fromtimestamp(float(timestamp), tz=UTC)
+        return from_utc_timestamp(float(timestamp))
     with suppress(ValueError, TypeError):
-        return _as_utc(datetime.fromisoformat(str(timestamp)))
+        return _as_utc(from_iso_string(str(timestamp)))
     return None
 
 
@@ -408,6 +350,27 @@ def get_audio_format(data: dict[str, Any]) -> str | None:
     return str(audio_format) if audio_format else None
 
 
+def _provider_mapping(
+    provider: TwentyFourSixProvider,
+    item_id: str,
+    data: dict[str, Any],
+    *,
+    audio: bool = False,
+    available: bool = True,
+    is_unique: bool | None = None,
+) -> ProviderMapping:
+    """Build the provider mapping of an item, with its 24six web link as url."""
+    return ProviderMapping(
+        item_id=item_id,
+        provider_domain=provider.domain,
+        provider_instance=provider.instance_id,
+        url=data.get("preview_url") or None,
+        available=available,
+        is_unique=is_unique,
+        audio_format=AudioFormat(content_type=ContentType.AAC) if audio else AudioFormat(),
+    )
+
+
 def _as_utc(value: datetime | None) -> datetime | None:
     """Return the datetime as timezone-aware, assuming UTC when it has no timezone."""
     if value is None or value.tzinfo is not None:
@@ -415,41 +378,26 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=UTC)
 
 
-def _album_mapping(
-    provider: TwentyFourSixProvider, collection_id: str, collection_data: dict[str, Any] | None
+def _collection_mapping(
+    provider: TwentyFourSixProvider,
+    collection_id: str,
+    collection_data: dict[str, Any] | None,
+    media_type: MediaType,
 ) -> ItemMapping:
-    """Build the album ItemMapping for a track from its (optional) embedded collection."""
-    album_name = ""
-    album_image: MediaItemImage | None = None
+    """Build the album or podcast mapping of a content item from its embedded collection."""
+    name = ""
+    image: MediaItemImage | None = None
     if collection_data:
-        album_name, _ = parse_title_and_version(collection_data.get("title") or "")
+        title = collection_data.get("title") or ""
+        name = parse_title_and_version(title)[0] if media_type == MediaType.ALBUM else title
         if img_path := _get_best_image(collection_data):
-            album_image = _image(provider, img_path)
+            image = _image(provider, img_path)
     return ItemMapping(
-        media_type=MediaType.ALBUM,
+        media_type=media_type,
         item_id=collection_id,
         provider=provider.instance_id,
-        name=album_name,
-        image=album_image,
-    )
-
-
-def _podcast_mapping(
-    provider: TwentyFourSixProvider, collection_id: str, collection_data: dict[str, Any] | None
-) -> ItemMapping:
-    """Build the podcast ItemMapping for an episode from its (optional) embedded collection."""
-    podcast_name = ""
-    podcast_image: MediaItemImage | None = None
-    if collection_data:
-        podcast_name = collection_data.get("title") or ""
-        if img_path := _get_best_image(collection_data):
-            podcast_image = _image(provider, img_path)
-    return ItemMapping(
-        media_type=MediaType.PODCAST,
-        item_id=collection_id,
-        provider=provider.instance_id,
-        name=podcast_name,
-        image=podcast_image,
+        name=name,
+        image=image,
     )
 
 
@@ -489,7 +437,7 @@ def _lrc_lyrics(lyrics_sync: Any) -> str | None:
     """
     Convert the synced lyrics of a track to LRC format.
 
-    The API either delivers LRC text directly or a list of timed lines.
+    The API delivers a list of timed lines (seconds) or, occasionally, LRC text.
 
     :param lyrics_sync: The raw ``lyrics_sync`` value.
     """
@@ -499,18 +447,10 @@ def _lrc_lyrics(lyrics_sync: Any) -> str | None:
         return lyrics_sync if lyrics_sync.lstrip().startswith("[") else None
     if not isinstance(lyrics_sync, list):
         return None
-    lines: list[str] = []
+    lines: list[tuple[str, int]] = []
     for entry in lyrics_sync:
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or entry.get("time") is None:
             continue
-        text = entry.get("text") or entry.get("line") or ""
-        timestamp = entry.get("time", entry.get("start", entry.get("ts")))
-        if timestamp is None:
-            continue
-        try:
-            seconds = float(timestamp)
-        except TypeError, ValueError:
-            continue
-        minutes, remainder = divmod(seconds, 60)
-        lines.append(f"[{int(minutes):02d}:{remainder:05.2f}]{text}")
-    return "\n".join(lines) if lines else None
+        with suppress(TypeError, ValueError):
+            lines.append((str(entry.get("text") or ""), int(float(entry["time"]) * 1000)))
+    return convert_to_lrc_lyrics(lines) if lines else None
