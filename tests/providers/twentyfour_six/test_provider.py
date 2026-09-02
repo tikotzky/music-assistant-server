@@ -275,7 +275,7 @@ async def test_similar_tracks_and_artists(provider: TwentyFourSixProvider) -> No
     _api_post(provider).return_value = {"data": [{"id": 8, "title": "Next", "type": "content"}]}
     tracks = await provider.get_similar_tracks("42", limit=10)
     _api_post(provider).assert_awaited_once_with(
-        "music/content/recommended", {"queue": ["42"], "limit": 10, "ai": 0}
+        "music/content/recommended", {"queue": ["42"], "limit": 10, "ai": 1}
     )
     assert [track.item_id for track in tracks] == ["8"]
 
