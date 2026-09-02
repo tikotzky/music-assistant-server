@@ -16,7 +16,11 @@ from music_assistant_models.errors import (
     ResourceTemporarilyUnavailable,
 )
 
-from music_assistant.helpers.throttle_retry import ThrottlerManager, throttle_with_retries
+from music_assistant.helpers.throttle_retry import (
+    ThrottlerManager,
+    parse_retry_after,
+    throttle_with_retries,
+)
 
 from .constants import (
     API_BASE_URL,
@@ -397,7 +401,7 @@ class TwentyFourSixAPIClient:
             msg = f"{endpoint} not found"
             raise MediaNotFoundError(msg)
         if response.status == 429:
-            backoff = int(response.headers.get("Retry-After", "30"))
+            backoff = parse_retry_after(response.headers.get("Retry-After")) or 30
             raise ResourceTemporarilyUnavailable("Rate limited", backoff_time=backoff)
         if response.status in (502, 503):
             raise ResourceTemporarilyUnavailable(backoff_time=30)

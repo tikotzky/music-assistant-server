@@ -131,6 +131,21 @@ async def test_error_responses_map_to_errors(
         assert "The q field is required." in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    ("retry_after", "expected"), [("12", 12), ("garbage", 30), (None, 30), ("0", 30)]
+)
+async def test_rate_limit_backoff(
+    provider: TwentyFourSixProvider, retry_after: str | None, expected: int
+) -> None:
+    """A 429 backs off for the Retry-After value, or a sane default when it is unusable."""
+    response = _FakeResponse(429, "")
+    if retry_after is not None:
+        response.headers["Retry-After"] = retry_after
+    with pytest.raises(ResourceTemporarilyUnavailable) as excinfo:
+        await provider.api._handle_api_response(cast("Any", response), "music/search", "tok")
+    assert excinfo.value.backoff_time == expected
+
+
 async def test_401_triggers_single_relogin(provider: TwentyFourSixProvider) -> None:
     """A 401 re-authenticates once and asks the caller to retry shortly."""
     provider.api._access_token = "old"
