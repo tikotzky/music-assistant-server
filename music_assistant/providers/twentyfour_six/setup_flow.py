@@ -20,8 +20,8 @@ from .constants import (
     CONF_PASSWORD,
     CONF_PROFILE_ID,
     CONF_PROFILE_PIN,
-    build_api_headers,
 )
+from .helpers import build_api_headers
 
 if TYPE_CHECKING:
     from music_assistant_models.config_entries import ConfigValueType
