@@ -364,6 +364,17 @@ async def test_library_endpoints_per_media_type(provider: TwentyFourSixProvider)
     assert _api_post(provider).await_count == 2
 
     assert await provider.library_add(_radio(provider)) is False
+    # artists cannot be added to or removed from the 24six library, only favorited
+    artist = Artist(
+        item_id="11",
+        provider=provider.instance_id,
+        name="A",
+        provider_mappings={_mapping(provider, "11")},
+    )
+    assert await provider.library_add(artist) is False
+    assert await provider.library_remove("11", MediaType.ARTIST) is False
+    await provider.set_favorite("11", MediaType.ARTIST, False)
+    cast("AsyncMock", provider.api.api_delete).assert_awaited_with("music/artist/11/favorite")
 
 
 async def test_browse_categories(provider: TwentyFourSixProvider) -> None:
