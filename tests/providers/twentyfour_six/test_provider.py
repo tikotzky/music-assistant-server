@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
+import pytest
 from music_assistant_models.enums import MediaType, StreamType
+from music_assistant_models.errors import UnsupportedFeaturedException
 from music_assistant_models.media_items import (
     Album,
     Artist,
@@ -20,6 +22,7 @@ from music_assistant_models.media_items import (
 from music_assistant.providers.twentyfour_six.provider import (
     TwentyFourSixProvider,
     _has_next_page,
+    _total_pages,
 )
 
 PLAYLIST_PAGE_1: dict[str, Any] = {
@@ -124,6 +127,16 @@ async def test_remove_playlist_tracks_replaces_remaining_tracks(
     )
 
 
+async def test_remove_last_playlist_track_is_refused(provider: TwentyFourSixProvider) -> None:
+    """The API cannot empty a playlist, so removing the last track raises instead of no-op."""
+    _api_get(provider).return_value = {
+        "playlist": {"id": 44, "title": "One", "contents": [{"id": 1}], "pagination": {}}
+    }
+    with pytest.raises(UnsupportedFeaturedException):
+        await provider.remove_playlist_tracks("44", (1,))
+    cast("AsyncMock", provider.api.api_patch).assert_not_awaited()
+
+
 async def test_stream_details_use_content_audio_format(provider: TwentyFourSixProvider) -> None:
     """The stream is requested in the format the content declares, HLS is detected."""
     _api_post(provider).return_value = {"id": 33, "title": "T", "audio_format": "mp3"}
@@ -163,12 +176,52 @@ async def test_similar_tracks_and_artists(provider: TwentyFourSixProvider) -> No
     )
     assert [track.item_id for track in tracks] == ["8"]
 
-    _api_get(provider).return_value = {"data": [{"id": 9, "name": "Alike"}]}
+    # the artist landing page has no similar artists: fall back to the listing filter
+    async def api_get(endpoint: str, **_kwargs: Any) -> dict[str, Any]:
+        if endpoint == "music/artist/11":
+            return {"artist": {"id": 11, "name": "A"}, "similar": None}
+        return {"data": [{"id": 9, "name": "Alike"}]}
+
+    _api_get(provider).side_effect = api_get
     artists = await provider.get_similar_artists("11", limit=7)
-    _api_get(provider).assert_awaited_once_with(
+    _api_get(provider).assert_awaited_with(
         "music/artist", params={"similar_artist_id": "11", "page": "1", "per_page": "7"}
     )
     assert [artist.item_id for artist in artists] == ["9"]
+
+    # the landing page's curated list wins when present
+    _api_get(provider).side_effect = None
+    _api_get(provider).return_value = {"artist": {"id": 11}, "similar": [{"id": 12, "name": "B"}]}
+    _api_get(provider).reset_mock()
+    artists = await provider.get_similar_artists("11", limit=7)
+    _api_get(provider).assert_awaited_once_with("music/artist/11")
+    assert [artist.item_id for artist in artists] == ["12"]
+
+
+async def test_artist_toptracks_single_page(provider: TwentyFourSixProvider) -> None:
+    """Top tracks are one page of the artist's most popular tracks, not the whole catalog."""
+    _api_get(provider).return_value = {"data": [{"id": 1, "title": "Hit", "length": 90}]}
+    tracks = await provider.get_artist_toptracks("11")
+    _api_get(provider).assert_awaited_once_with(
+        "music/content",
+        params={
+            "artist_id": "11",
+            "no_pagination": "0",
+            "sort": "popular",
+            "page": "1",
+            "per_page": "50",
+        },
+    )
+    assert [track.item_id for track in tracks] == ["1"]
+
+
+async def test_create_playlist_is_editable(provider: TwentyFourSixProvider) -> None:
+    """A playlist we created is editable even though the create response omits ownership."""
+    _api_post(provider).return_value = {"playlist": {"id": 77, "title": "Mine"}}
+    playlist = await provider.create_playlist("Mine", {MediaType.TRACK})
+    _api_post(provider).assert_awaited_once_with("music/playlist", params={"name": "Mine"})
+    assert playlist.is_editable is True
+    assert next(iter(playlist.provider_mappings)).is_unique is True
 
 
 async def test_recommendation_rows_and_items(provider: TwentyFourSixProvider) -> None:
@@ -334,7 +387,7 @@ async def test_resume_position(provider: TwentyFourSixProvider) -> None:
 async def test_on_played_reports_tracks_and_episodes_only(
     provider: TwentyFourSixProvider,
 ) -> None:
-    """Playback progress is reported for tracks and episodes, never for radio."""
+    """A play is logged once when it ends, like the app does, never for radio or ticks."""
     log_playback = cast("AsyncMock", provider.api.log_playback)
     track = Track(
         item_id="33",
@@ -342,10 +395,18 @@ async def test_on_played_reports_tracks_and_episodes_only(
         name="T",
         provider_mappings={_mapping(provider, "33")},
     )
+    # periodic progress ticks while playing are not plays
     await provider.on_played(MediaType.TRACK, "33", False, 42, track, is_playing=True)
+    log_playback.assert_not_awaited()
+    # the play ended (stopped, skipped or finished): report the seconds listened
+    await provider.on_played(MediaType.TRACK, "33", False, 42, track, is_playing=False)
     log_playback.assert_awaited_once_with(item_id="33", seconds=42, current=42)
+    await provider.on_played(MediaType.TRACK, "33", True, 180, track, is_playing=False)
+    log_playback.assert_awaited_with(item_id="33", seconds=180, current=180)
+    # marked as unplayed in the UI, or radio: nothing to report
+    await provider.on_played(MediaType.TRACK, "33", False, 0, track, is_playing=False)
     await provider.on_played(MediaType.RADIO, "77", False, 42, _radio(provider))
-    assert log_playback.await_count == 1
+    assert log_playback.await_count == 2
 
 
 async def test_library_podcasts_respect_profile(provider: TwentyFourSixProvider) -> None:
@@ -358,6 +419,15 @@ async def test_library_podcasts_respect_profile(provider: TwentyFourSixProvider)
     _api_get(provider).return_value = {"data": [{"id": 55, "title": "Show"}]}
     podcasts = [item async for item in provider.get_library_podcasts()]
     assert [podcast.item_id for podcast in podcasts] == ["55"]
+
+
+def test_total_pages_derived_from_totals() -> None:
+    """The API reports totals and a page size; the page count is derived from them."""
+    assert _total_pages({"total": 73, "per_page": 200, "next_page": None}) == 1
+    assert _total_pages({"total": 401, "per_page": 200}) == 3
+    assert _total_pages({"total": 0, "per_page": 200}) == 0
+    assert _total_pages({"total_pages": 4, "total": 1, "per_page": 1}) == 4
+    assert _total_pages({}) is None
 
 
 def test_has_next_page() -> None:
