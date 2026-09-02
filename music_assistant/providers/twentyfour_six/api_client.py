@@ -16,6 +16,7 @@ from music_assistant_models.errors import (
     ResourceTemporarilyUnavailable,
 )
 
+from music_assistant.helpers.datetime import utc
 from music_assistant.helpers.throttle_retry import (
     ThrottlerManager,
     parse_retry_after,
@@ -31,10 +32,13 @@ from .constants import (
     CONF_PROFILE_ID,
     CONF_PROFILE_PIN,
     CONF_SESSION_DATA,
-    build_api_headers,
+    STREAMED_AT_FORMAT,
 )
+from .helpers import build_api_headers, error_message
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .provider import TwentyFourSixProvider
 
 type ParamsType = dict[str, Any] | list[tuple[str, str]] | None
@@ -43,6 +47,7 @@ _MAX_ERROR_LOG = 500
 # authenticated endpoint used to probe whether a restored token is still valid; it also
 # returns the profile details (content permissions) that a fresh login would provide
 _PROFILE_ENDPOINT = "profile"
+_TRANSLATION_OWNER = "provider.twentyfour_six"
 
 
 class TwentyFourSixAPIClient:
@@ -50,17 +55,24 @@ class TwentyFourSixAPIClient:
 
     throttler = ThrottlerManager(rate_limit=1, period=1)
 
-    def __init__(self, provider: TwentyFourSixProvider) -> None:
+    def __init__(
+        self,
+        provider: TwentyFourSixProvider,
+        persist_setup_value: Callable[[str, str], None],
+    ) -> None:
         """
         Initialize the API client.
 
         :param provider: The provider instance owning this client (for config and logging).
+        :param persist_setup_value: Callback that persists a rotated setup value
+            (session token, device ids) to the provider's setup data.
         """
         self.provider = provider
         self.logger = provider.logger
         self.mass = provider.mass
-        # profile details as returned by the last login (empty when the session was restored)
+        # profile details as returned by the login or the session restore
         self.profile: dict[str, Any] = {}
+        self._persist_setup_value = persist_setup_value
         self._access_token: str = ""
         self._device_id: str = ""
         self._device_serial: str = ""
@@ -68,14 +80,10 @@ class TwentyFourSixAPIClient:
 
     @property
     def device_id(self) -> str:
-        """
-        Return the device_id, generating a temporary one if needed.
-
-        The authoritative device_id is assigned by the server during login and
-        persisted in the session data. A temporary UUID is generated only so the
-        login request itself has a value for the X-DEVICE-ID header.
-        """
+        """Return the device id that identifies this Music Assistant instance to the API."""
         if not self._device_id:
+            # the server assigns the authoritative id at login and it is persisted with
+            # the session; until then a random one lets the login request carry a header
             stored = self.provider.get_setup_value(CONF_DEVICE_ID)
             self._device_id = str(stored) if stored else str(uuid.uuid4())
         return self._device_id
@@ -89,8 +97,21 @@ class TwentyFourSixAPIClient:
                 self._device_serial = str(stored)
             else:
                 self._device_serial = str(uuid.uuid4()).upper()
-                self.provider.update_device_serial(self._device_serial)
+                self._persist_setup_value(CONF_DEVICE_SERIAL, self._device_serial)
         return self._device_serial
+
+    def profile_allows(self, content_type: str) -> bool:
+        """
+        Return whether the logged-in profile may access the given content type.
+
+        An unknown permission (no profile details yet) counts as allowed.
+
+        :param content_type: The content type key of the profile's allowed map.
+        """
+        allowed = self.profile.get("allowed")
+        if not isinstance(allowed, dict) or content_type not in allowed:
+            return True
+        return bool(allowed[content_type])
 
     async def login(self) -> None:
         """Perform a login via the v3 mobile API using the profile selected during setup."""
@@ -98,8 +119,11 @@ class TwentyFourSixAPIClient:
         password = self.provider.get_setup_value(CONF_PASSWORD)
         profile_id = self.provider.get_setup_value(CONF_PROFILE_ID)
         if not email or not password or not profile_id:
-            msg = "Email, password, and profile are required"
-            raise LoginFailed(msg)
+            raise LoginFailed(
+                "Email, password, and profile are required",
+                translation_key="login_failed",
+                translation_owner=_TRANSLATION_OWNER,
+            )
 
         payload: dict[str, Any] = {
             "email": str(email),
@@ -121,22 +145,34 @@ class TwentyFourSixAPIClient:
                     self.logger.debug(
                         "Login failed: status=%s body=%s", resp.status, text[:_MAX_ERROR_LOG]
                     )
-                    msg = f"Login failed with status {resp.status}"
-                    raise LoginFailed(msg)
+                    message = error_message(text)
+                    raise LoginFailed(
+                        f"Login failed with status {resp.status}: {message}",
+                        translation_key="pin_required"
+                        if "pin" in message.lower()
+                        else "login_failed",
+                        translation_owner=_TRANSLATION_OWNER,
+                    )
                 data: dict[str, Any] = await resp.json()
         except (aiohttp.ClientError, TimeoutError) as err:
-            msg = f"Login request failed: {err}"
-            raise LoginFailed(msg) from err
+            raise LoginFailed(
+                f"Login request failed: {err}",
+                translation_key="connection_failed",
+                translation_owner=_TRANSLATION_OWNER,
+            ) from err
 
         token = data.get("token")
         if not token:
-            msg = "No access token in login response"
-            raise LoginFailed(msg)
+            raise LoginFailed(
+                "No access token in login response",
+                translation_key="login_failed",
+                translation_owner=_TRANSLATION_OWNER,
+            )
 
         self._access_token = str(token)
         if server_device_id := data.get("device_id"):
             self._device_id = str(server_device_id)
-            self.provider.update_device_id(self._device_id)
+            self._persist_setup_value(CONF_DEVICE_ID, self._device_id)
         self.profile = data.get("profile") or {}
         self.logger.info(
             "Logged in as profile '%s' (id=%s)",
@@ -150,8 +186,10 @@ class TwentyFourSixAPIClient:
         """Invalidate the current session on the server (best effort)."""
         if not self._access_token:
             return
-        with contextlib.suppress(aiohttp.ClientError, TimeoutError):
+        try:
             await self._raw_request("POST", "logout")
+        except (aiohttp.ClientError, TimeoutError) as err:
+            self.logger.debug("Logout request failed: %s", err)
         self._access_token = ""
         self.profile = {}
 
@@ -210,16 +248,12 @@ class TwentyFourSixAPIClient:
     @throttle_with_retries
     async def api_get_stream_url(self, endpoint: str, params: dict[str, str]) -> str:
         """
-        Resolve the stream URL behind a play endpoint (the API answers with a 302 redirect).
+        Resolve the stream URL behind a play endpoint (the API answers with a redirect).
 
         :param endpoint: The play endpoint, e.g. ``content/123/play``.
         :param params: Query parameters such as the requested format.
         """
-        if not self._access_token:
-            await self.ensure_logged_in()
-        token = self._access_token
-        url = f"{API_BASE_URL}/{endpoint.lstrip('/')}"
-        headers = build_api_headers(self.device_id, token, self.device_serial)
+        url, headers, token = await self._prepare_request(endpoint)
         try:
             async with self.mass.http_session.get(
                 url, headers=headers, params=params, allow_redirects=False
@@ -227,23 +261,21 @@ class TwentyFourSixAPIClient:
                 if resp.status in (301, 302, 303, 307, 308):
                     if location := resp.headers.get("Location", ""):
                         return location
-                    msg = f"No redirect URL for {endpoint}"
-                    raise MediaNotFoundError(msg)
+                    raise MediaNotFoundError(f"No redirect URL for {endpoint}")
                 await self._handle_api_response(resp, endpoint, token)
-                msg = f"Expected a redirect for {endpoint}, got {resp.status}"
-                raise MediaNotFoundError(msg)
+                raise MediaNotFoundError(f"Expected a redirect for {endpoint}, got {resp.status}")
         except (aiohttp.ClientError, TimeoutError) as err:
             raise ResourceTemporarilyUnavailable(str(err), backoff_time=5) from err
 
     async def log_playback(self, item_id: str, seconds: int, current: int) -> None:
         """
-        Report playback progress for a content item (fire-and-forget).
+        Report a finished play of a content item, the way the app does.
 
         :param item_id: The content (track or episode) id.
-        :param seconds: Total seconds listened.
-        :param current: Current playback position in seconds.
+        :param seconds: Seconds listened during the play.
+        :param current: Playback position in seconds where the play ended.
         """
-        with contextlib.suppress(MusicAssistantError):
+        try:
             await self._request(
                 "POST",
                 f"content/{item_id}/log",
@@ -252,11 +284,12 @@ class TwentyFourSixAPIClient:
                     "device_id": self.device_id,
                     "is_offline": "0",
                     "seconds": str(seconds),
+                    "streamed_at": utc().strftime(STREAMED_AT_FORMAT),
                 },
             )
-
-    async def close(self) -> None:
-        """Clean up resources (no-op, the shared HTTP session is owned by the server)."""
+        except MusicAssistantError as err:
+            # a lost play log must not disturb playback, but it should not go unnoticed
+            self.logger.warning("Could not log the play of %s: %s", item_id, err)
 
     async def _register_device(self) -> None:
         """Register this device with the server so playback logging is accepted."""
@@ -336,7 +369,7 @@ class TwentyFourSixAPIClient:
     def _persist_session(self) -> None:
         """Persist the access token and server device_id so they survive a restart."""
         data = {"token": self._access_token, "device_id": self._device_id}
-        self.provider.update_session_data(json.dumps(data))
+        self._persist_setup_value(CONF_SESSION_DATA, json.dumps(data))
 
     async def _handle_token_expired(self, failed_token: str) -> None:
         """
@@ -351,6 +384,18 @@ class TwentyFourSixAPIClient:
             self._access_token = ""
             await self.login()
             self._persist_session()
+
+    async def _prepare_request(self, endpoint: str) -> tuple[str, dict[str, str], str]:
+        """
+        Return the URL, headers and token for an authenticated request.
+
+        :param endpoint: API endpoint path relative to the API base URL.
+        """
+        if not self._access_token:
+            await self.ensure_logged_in()
+        token = self._access_token
+        url = f"{API_BASE_URL}/{endpoint.lstrip('/')}"
+        return url, build_api_headers(self.device_id, token, self.device_serial), token
 
     @throttle_with_retries
     async def _request(
@@ -369,11 +414,7 @@ class TwentyFourSixAPIClient:
         :param params: Optional query parameters (dict or list of tuples for repeated keys).
         :param json_data: Optional JSON body.
         """
-        if not self._access_token:
-            await self.ensure_logged_in()
-        token = self._access_token
-        url = f"{API_BASE_URL}/{endpoint.lstrip('/')}"
-        headers = build_api_headers(self.device_id, token, self.device_serial)
+        url, headers, token = await self._prepare_request(endpoint)
         try:
             async with self.mass.http_session.request(
                 method, url, headers=headers, params=params, json=json_data
@@ -398,8 +439,7 @@ class TwentyFourSixAPIClient:
             await self._handle_token_expired(request_token or self._access_token)
             raise ResourceTemporarilyUnavailable("Token expired, re-authenticated", backoff_time=1)
         if response.status == 404:
-            msg = f"{endpoint} not found"
-            raise MediaNotFoundError(msg)
+            raise MediaNotFoundError(f"{endpoint} not found")
         if response.status == 429:
             backoff = parse_retry_after(response.headers.get("Retry-After")) or 30
             raise ResourceTemporarilyUnavailable("Rate limited", backoff_time=backoff)
@@ -414,7 +454,7 @@ class TwentyFourSixAPIClient:
             # a client error (validation, method not allowed, ...) will not get better
             # by retrying, so fail right away with the server's own message
             raise MusicAssistantError(
-                f"API error {response.status} on {endpoint}: {_error_message(text)}"
+                f"API error {response.status} on {endpoint}: {error_message(text)}"
             )
         if response.status == 204:
             return {}
@@ -430,12 +470,3 @@ class TwentyFourSixAPIClient:
         if not isinstance(result, dict):
             raise ResourceTemporarilyUnavailable(f"Unexpected response from {endpoint}")
         return result
-
-
-def _error_message(body: str) -> str:
-    """Return the human readable message of an API error body, or the raw (trimmed) body."""
-    with contextlib.suppress(json.JSONDecodeError, AttributeError, TypeError):
-        parsed = json.loads(body)
-        if isinstance(parsed, dict) and parsed.get("message"):
-            return str(parsed["message"])
-    return body[:200]
