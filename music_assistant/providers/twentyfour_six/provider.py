@@ -84,6 +84,9 @@ if TYPE_CHECKING:
 # errors from a single (optional) API call that must not take a whole listing down
 _API_ERRORS = (LoginFailed, MediaNotFoundError, ResourceTemporarilyUnavailable)
 
+# stories are albums of (children's) audio stories, listed with their own sort
+_STORIES_PARAMS: dict[str, str] = {"sort": "newStories", "with_contents": "0"}
+
 # recommendation rows served by a dedicated listing endpoint:
 # row id -> (name, translation key, icon, endpoint, params)
 _LISTING_ROWS: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
@@ -100,6 +103,13 @@ _LISTING_ROWS: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "mdi-music-note",
         f"{CONTENT_TYPE_MUSIC}/collection",
         {"sort": "newSingles", "with_contents": "0"},
+    ),
+    "stories": (
+        "New Stories",
+        "new_stories",
+        "mdi-book-open-page-variant",
+        f"{CONTENT_TYPE_MUSIC}/collection",
+        _STORIES_PARAMS,
     ),
     "playlists": (
         "24six Playlists",
@@ -149,6 +159,11 @@ _LISTING_ROWS: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
 _HOMEPAGE_ROWS: dict[str, tuple[str, str, str]] = {
     "banners": ("Featured", "featured", "mdi-star"),
     "by24Six": ("24six Presents", "presents", "mdi-creation"),
+}
+# rows that only make sense when the profile may access the content type
+_ROW_PERMISSIONS: dict[str, str] = {
+    "stories": "stories",
+    "newPodcasts": CONTENT_TYPE_PODCAST,
 }
 
 
@@ -638,6 +653,14 @@ class TwentyFourSixProvider(MusicProvider):
             data = await self.api.api_get(f"{CONTENT_TYPE_MUSIC}/category/{path_parts[1]}")
             return [parse_album(self, item) for item in _valid_items(data.get("releases"))]
 
+        if folder == "stories":
+            return [
+                parse_album(self, item)
+                async for item in self._paginate(
+                    f"{CONTENT_TYPE_MUSIC}/collection", _STORIES_PARAMS
+                )
+            ]
+
         if folder == "categories":
             data = await self.api.api_get(
                 f"{CONTENT_TYPE_MUSIC}/category",
@@ -654,7 +677,7 @@ class TwentyFourSixProvider(MusicProvider):
             ]
 
         result = list(await super().browse(path))
-        # only add the Categories folder to the root-level listing
+        # only add the Categories and Stories folders to the root-level listing
         if not folder:
             result.append(
                 BrowseFolder(
@@ -665,6 +688,17 @@ class TwentyFourSixProvider(MusicProvider):
                     translation_key="categories",
                 )
             )
+            if self._profile_allows("stories"):
+                result.append(
+                    BrowseFolder(
+                        item_id="stories",
+                        provider=self.instance_id,
+                        path=f"{prefix}://stories",
+                        name="Stories",
+                        translation_key="stories",
+                        is_playable=True,
+                    )
+                )
         return result
 
     async def get_recommendations(self) -> list[RecommendationFolder]:
@@ -687,6 +721,7 @@ class TwentyFourSixProvider(MusicProvider):
                 is_playable=True,
             )
             for row_id, name, translation_key, icon in rows
+            if self._profile_allows(_ROW_PERMISSIONS.get(row_id, CONTENT_TYPE_MUSIC))
         ]
 
     async def get_recommendation_items(
