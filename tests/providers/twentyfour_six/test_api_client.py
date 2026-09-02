@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
+from music_assistant_models.errors import (
+    MediaNotFoundError,
+    MusicAssistantError,
+    ResourceTemporarilyUnavailable,
+)
 
 from music_assistant.providers.twentyfour_six.constants import CONF_SESSION_DATA
 from music_assistant.providers.twentyfour_six.provider import TwentyFourSixProvider
@@ -86,3 +91,69 @@ async def test_missing_session_logs_in(
 
     provider.api._raw_request.assert_not_awaited()
     assert json.loads(persisted[0]) == {"token": "tok-2", "device_id": "dev-2"}
+
+
+class _FakeResponse:
+    def __init__(self, status: int, body: str = "", json_body: Any = None) -> None:
+        self.status = status
+        self.headers: dict[str, str] = {}
+        self._body = body
+        self._json = json_body
+
+    async def text(self) -> str:
+        return self._body
+
+    async def json(self) -> Any:
+        if self._json is None:
+            raise json.JSONDecodeError("no json", "", 0)
+        return self._json
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (422, '{"message": "The q field is required."}', MusicAssistantError),
+        (405, "nope", MusicAssistantError),
+        (404, "", MediaNotFoundError),
+        (500, "boom", ResourceTemporarilyUnavailable),
+        (503, "", ResourceTemporarilyUnavailable),
+    ],
+)
+async def test_error_responses_map_to_errors(
+    provider: TwentyFourSixProvider, status: int, body: str, expected: type[Exception]
+) -> None:
+    """Client errors fail fast with the API message, server errors are retried later."""
+    with pytest.raises(expected) as excinfo:
+        await provider.api._handle_api_response(
+            cast("Any", _FakeResponse(status, body)), "music/search", "tok"
+        )
+    if status == 422:
+        assert "The q field is required." in str(excinfo.value)
+
+
+async def test_401_triggers_single_relogin(provider: TwentyFourSixProvider) -> None:
+    """A 401 re-authenticates once and asks the caller to retry shortly."""
+    provider.api._access_token = "old"
+    provider.api.login = AsyncMock()  # type: ignore[method-assign]
+    provider.update_session_data = lambda _data: None  # type: ignore[method-assign, assignment]
+    with pytest.raises(ResourceTemporarilyUnavailable):
+        await provider.api._handle_api_response(
+            cast("Any", _FakeResponse(401, "")), "music/artist", "old"
+        )
+    provider.api.login.assert_awaited_once()
+    # a stale caller whose token was already replaced does not log in again
+    provider.api._access_token = "new"
+    with pytest.raises(ResourceTemporarilyUnavailable):
+        await provider.api._handle_api_response(
+            cast("Any", _FakeResponse(401, "")), "music/artist", "old"
+        )
+    provider.api.login.assert_awaited_once()
+
+
+async def test_list_responses_are_wrapped(provider: TwentyFourSixProvider) -> None:
+    """A bare JSON list answer is exposed under the usual data key."""
+    result = await provider.api._handle_api_response(
+        cast("Any", _FakeResponse(200, json_body=[{"id": 1}])), "music/content/recommended"
+    )
+    assert result == {"data": [{"id": 1}]}
+    assert await provider.api._handle_api_response(cast("Any", _FakeResponse(204)), "x") == {}
