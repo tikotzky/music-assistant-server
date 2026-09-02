@@ -46,6 +46,9 @@
       },
       "stories": {
         "name": "Stories"
+      },
+      "radio": {
+        "name": "Radio stations"
       }
     },
     "recommendations": {
