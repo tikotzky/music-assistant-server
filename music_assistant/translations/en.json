@@ -2486,6 +2486,7 @@
   "provider.twentyfour_six.errors.pin_required": "The selected profile requires a PIN.",
   "provider.twentyfour_six.manifest.description": "Stream Jewish music, podcasts and radio from 24six.app",
   "provider.twentyfour_six.media.folder.categories.name": "Categories",
+  "provider.twentyfour_six.media.folder.radio.name": "Radio stations",
   "provider.twentyfour_six.media.folder.stories.name": "Stories",
   "provider.twentyfour_six.media.recommendations.continue_listening.name": "Continue Listening",
   "provider.twentyfour_six.media.recommendations.featured.name": "Featured",
