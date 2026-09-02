@@ -35,8 +35,9 @@ if TYPE_CHECKING:
 type ParamsType = dict[str, Any] | list[tuple[str, str]] | None
 
 _MAX_ERROR_LOG = 500
-# cheap authenticated endpoint used to probe whether a restored token is still valid
-_TOKEN_PROBE_ENDPOINT = "music/artist"
+# authenticated endpoint used to probe whether a restored token is still valid; it also
+# returns the profile details (content permissions) that a fresh login would provide
+_PROFILE_ENDPOINT = "profile"
 
 
 class TwentyFourSixAPIClient:
@@ -147,6 +148,7 @@ class TwentyFourSixAPIClient:
         with contextlib.suppress(aiohttp.ClientError, TimeoutError):
             await self._raw_request("POST", "logout")
         self._access_token = ""
+        self.profile = {}
 
     async def ensure_logged_in(self) -> None:
         """Ensure we have a valid token, restoring the persisted session or logging in."""
@@ -283,9 +285,7 @@ class TwentyFourSixAPIClient:
         self._access_token = str(token)
         self._device_id = str(saved_device_id)
         try:
-            status = await self._raw_request(
-                "GET", _TOKEN_PROBE_ENDPOINT, params={"page": "1", "per_page": "1"}
-            )
+            status, profile_data = await self._raw_request("GET", _PROFILE_ENDPOINT)
         except aiohttp.ClientError, TimeoutError:
             # a network error does not invalidate the token: keep it and let the
             # first real request retry
@@ -294,13 +294,24 @@ class TwentyFourSixAPIClient:
             self._access_token = ""
             self._device_id = ""
             return False
+        if status == 200 and isinstance(profile_data, dict):
+            self.profile = profile_data.get("profile") or profile_data
+            self.logger.debug(
+                "Restored session for profile '%s', content access: %s",
+                self.profile.get("name", "unknown"),
+                self.profile.get("allowed"),
+            )
         # 5xx or success: assume the token is valid, the first real API call
         # handles a 401 if it turns out to be expired after all
         return True
 
-    async def _raw_request(self, method: str, endpoint: str, *, params: ParamsType = None) -> int:
+    async def _raw_request(
+        self, method: str, endpoint: str, *, params: ParamsType = None
+    ) -> tuple[int, Any]:
         """
-        Make an unthrottled request without auth handling and return the status code.
+        Make an unthrottled request without auth handling.
+
+        Returns the status code and the decoded JSON body (None when there is none).
 
         :param method: HTTP method.
         :param endpoint: API endpoint path relative to the API base URL.
@@ -312,7 +323,10 @@ class TwentyFourSixAPIClient:
             method, url, headers=headers, params=params
         ) as resp:
             status: int = resp.status
-            return status
+            body: Any = None
+            with contextlib.suppress(json.JSONDecodeError, aiohttp.ContentTypeError):
+                body = await resp.json()
+            return status, body
 
     def _persist_session(self) -> None:
         """Persist the access token and server device_id so they survive a restart."""
