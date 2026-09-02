@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import AsyncGenerator, Coroutine
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -18,6 +19,12 @@ def _create_task(coro: Coroutine[Any, Any, Any], **_kwargs: Any) -> asyncio.Task
     return asyncio.create_task(coro)
 
 
+@asynccontextmanager
+async def _handle_refresh(_bypass: bool) -> AsyncGenerator[None]:
+    """Stand in for the cache controller's bypass context (the cache is always cold here)."""
+    yield
+
+
 @pytest.fixture
 def provider() -> TwentyFourSixProvider:
     """Create a real TwentyFourSixProvider with mocked dependencies and a cold cache."""
@@ -27,6 +34,7 @@ def provider() -> TwentyFourSixProvider:
     mass.cache.get = AsyncMock(return_value=None)
     mass.cache.set = AsyncMock()
     mass.cache.delete = AsyncMock()
+    mass.cache.handle_refresh = _handle_refresh
     manifest = Mock()
     manifest.domain = "twentyfour_six"
     config = Mock()
