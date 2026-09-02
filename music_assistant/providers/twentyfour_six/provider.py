@@ -12,6 +12,7 @@ from music_assistant_models.errors import (
     LoginFailed,
     MediaNotFoundError,
     ResourceTemporarilyUnavailable,
+    UnsupportedFeaturedException,
 )
 from music_assistant_models.media_items import (
     Album,
@@ -54,6 +55,7 @@ from .constants import (
     MAX_PAGES,
     PAGE_SIZE,
     RECOMMENDATION_ROW_SIZE,
+    TOP_TRACKS_LIMIT,
 )
 from .parsers import (
     get_audio_format,
@@ -394,14 +396,18 @@ class TwentyFourSixProvider(MusicProvider):
 
     @use_cache(3600 * 24, allow_expired_cache=True)
     async def get_artist_toptracks(self, prov_artist_id: str) -> list[Track]:
-        """Get a list of the most popular tracks for the given artist."""
-        return [
-            parse_track(self, item)
-            async for item in self._paginate(
-                f"{CONTENT_TYPE_MUSIC}/content",
-                {"artist_id": prov_artist_id, "no_pagination": "0", "sort": "popular"},
-            )
-        ]
+        """Get the most popular tracks for the given artist."""
+        data = await self.api.api_get(
+            f"{CONTENT_TYPE_MUSIC}/content",
+            params={
+                "artist_id": prov_artist_id,
+                "no_pagination": "0",
+                "sort": "popular",
+                "page": "1",
+                "per_page": str(TOP_TRACKS_LIMIT),
+            },
+        )
+        return [parse_track(self, item) for item in _valid_items(data.get("data"))]
 
     async def get_playlist_tracks(
         self, prov_playlist_id: str, page: int = 0
@@ -447,7 +453,9 @@ class TwentyFourSixProvider(MusicProvider):
             )
         ]
         # the listing carries no episode number, so rank on the release date
-        positions = rank_episodes_by_date([parse_release_date(item) for item in episodes])
+        positions = rank_episodes_by_date(
+            [parse_release_date(item, created_fallback=True) for item in episodes]
+        )
         for position, item in zip(positions, episodes, strict=True):
             yield parse_podcast_episode(self, item, position=position, podcast=podcast)
 
@@ -526,7 +534,8 @@ class TwentyFourSixProvider(MusicProvider):
     async def create_playlist(self, name: str, media_types: set[MediaType]) -> Playlist:
         """Create a new playlist on the provider."""
         data = await self.api.api_post(f"{CONTENT_TYPE_MUSIC}/playlist", params={"name": name})
-        return parse_playlist(self, data.get("playlist") or data)
+        # the create response does not flag ownership, but a playlist we created is ours
+        return parse_playlist(self, {**(data.get("playlist") or data), "mine": True})
 
     async def add_playlist_tracks(self, prov_playlist_id: str, prov_track_ids: list[str]) -> None:
         """Add tracks to an existing playlist."""
@@ -554,6 +563,11 @@ class TwentyFourSixProvider(MusicProvider):
             for pos, track in enumerate(await self._get_all_playlist_contents(prov_playlist_id), 1)
             if pos not in set(positions_to_remove)
         ]
+        if not remaining_ids:
+            # the API validates content[] entries but treats a missing list as "no change",
+            # so a playlist cannot be emptied through this endpoint
+            msg = "24six cannot remove the last track of a playlist, delete the playlist instead"
+            raise UnsupportedFeaturedException(msg)
         playlist_name = (await self._get_playlist_page(prov_playlist_id, 1)).get("title") or ""
         params: list[tuple[str, str]] = [("content[]", tid) for tid in remaining_ids]
         params.append(("force", "0"))
@@ -582,28 +596,37 @@ class TwentyFourSixProvider(MusicProvider):
         :param prov_artist_id: The provider artist id.
         :param limit: Maximum number of artists to return.
         """
-        data = await self.api.api_get(
-            f"{CONTENT_TYPE_MUSIC}/artist",
-            params={"similar_artist_id": prov_artist_id, "page": "1", "per_page": str(limit)},
-        )
-        return [parse_artist(self, item) for item in _valid_items(data.get("data"))[:limit]]
+        # the artist landing page carries the curated similar artists, fall back to the
+        # similar-artist filter of the artist listing when it has none
+        landing = await self._get_artist_data(prov_artist_id)
+        similar = _valid_items(landing.get("similar"))
+        if not similar:
+            data = await self.api.api_get(
+                f"{CONTENT_TYPE_MUSIC}/artist",
+                params={"similar_artist_id": prov_artist_id, "page": "1", "per_page": str(limit)},
+            )
+            similar = _valid_items(data.get("data"))
+        return [parse_artist(self, item) for item in similar[:limit]]
 
     async def get_stream_details(self, item_id: str, media_type: MediaType) -> StreamDetails:
         """Get the stream details for a track, podcast episode or radio station."""
-        if media_type == MediaType.RADIO:
-            stream_url = await self.api.api_get_stream_url(
-                f"radio/{item_id}/play", {"livestream": "1", "format": HLS_AUDIO_FORMAT}
-            )
-        else:
-            content_type = (
-                CONTENT_TYPE_PODCAST
-                if media_type == MediaType.PODCAST_EPISODE
-                else CONTENT_TYPE_MUSIC
-            )
-            stream_url = await self.api.api_get_stream_url(
-                f"content/{item_id}/play",
-                {"format": await self._preferred_audio_format(content_type, item_id)},
-            )
+        # playback must not queue behind library/browse traffic: resolve the stream
+        # without the request throttle (the retries on transient errors still apply)
+        async with self.api.throttler.bypass():
+            if media_type == MediaType.RADIO:
+                stream_url = await self.api.api_get_stream_url(
+                    f"radio/{item_id}/play", {"livestream": "1", "format": HLS_AUDIO_FORMAT}
+                )
+            else:
+                content_type = (
+                    CONTENT_TYPE_PODCAST
+                    if media_type == MediaType.PODCAST_EPISODE
+                    else CONTENT_TYPE_MUSIC
+                )
+                stream_url = await self.api.api_get_stream_url(
+                    f"content/{item_id}/play",
+                    {"format": await self._preferred_audio_format(content_type, item_id)},
+                )
         is_hls = urlparse(stream_url).path.endswith(".m3u8")
         return StreamDetails(
             provider=self.instance_id,
@@ -637,8 +660,15 @@ class TwentyFourSixProvider(MusicProvider):
         """
         if media_type not in (MediaType.TRACK, MediaType.PODCAST_EPISODE):
             return
-        # the API wants the total listen time and the position; without a per-session
-        # counter on our side the position is the closest available value for both
+        if is_playing:
+            # the app logs a play once, when it ends; the periodic progress ticks would
+            # each count as a play on the server, inflating play counts and charts
+            return
+        if position <= 0 and not fully_played:
+            # the item was marked unplayed in the UI, nothing was listened to
+            return
+        # the API wants the seconds listened and the position they stopped at; the
+        # elapsed playback time is the closest value we have for both
         await self.api.log_playback(item_id=prov_item_id, seconds=position, current=position)
 
     async def browse(self, path: str) -> Sequence[MediaItemType | ItemMapping | BrowseFolder]:
@@ -656,12 +686,7 @@ class TwentyFourSixProvider(MusicProvider):
             return [parse_album(self, item) for item in _valid_items(data.get("releases"))]
 
         if folder == "stories":
-            return [
-                parse_album(self, item)
-                async for item in self._paginate(
-                    f"{CONTENT_TYPE_MUSIC}/collection", _STORIES_PARAMS
-                )
-            ]
+            return [parse_album(self, item) for item in await self._get_story_albums()]
 
         if folder == "categories":
             data = await self.api.api_get(
@@ -822,6 +847,14 @@ class TwentyFourSixProvider(MusicProvider):
                 break
             await self.mass.cache.delete(cache_key, provider=self.instance_id)
             api_page += 1
+
+    @use_cache(3600 * 6, allow_expired_cache=True)
+    async def _get_story_albums(self) -> list[dict[str, Any]]:
+        """Fetch and cache the raw story albums across all pages of the listing."""
+        return [
+            item
+            async for item in self._paginate(f"{CONTENT_TYPE_MUSIC}/collection", _STORIES_PARAMS)
+        ]
 
     @use_cache(3600 * 6, allow_expired_cache=True)
     async def _get_listing_row(self, row_id: str) -> list[dict[str, Any]]:
@@ -1008,6 +1041,10 @@ def _total_pages(pagination: Any) -> int | None:
         with contextlib.suppress(TypeError, ValueError):
             if pagination.get(key) is not None:
                 return int(pagination[key])
+    # the API reports totals and a page size rather than a page count
+    with contextlib.suppress(TypeError, ValueError, ZeroDivisionError):
+        if pagination.get("total") is not None and pagination.get("per_page"):
+            return -(-int(pagination["total"]) // int(pagination["per_page"]))
     return None
 
 
