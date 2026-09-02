@@ -1,0 +1,42 @@
+{
+  "config_entries": {
+    "twentyfour_six_email": {
+      "label": "Email address",
+      "description": "The email address of your 24six account."
+    },
+    "twentyfour_six_password": {
+      "label": "Password",
+      "description": "The password of your 24six account."
+    },
+    "twentyfour_six_profile_id": {
+      "label": "Profile",
+      "description": "The profile on the account to use. Profiles marked with (PIN required) need their PIN below."
+    },
+    "twentyfour_six_profile_pin": {
+      "label": "Profile PIN",
+      "description": "The 4-digit PIN of the selected profile. Leave empty if the profile has no PIN."
+    }
+  },
+  "setup_flow": {
+    "user": {
+      "title": "Sign in to 24six",
+      "description": "Enter the credentials of your 24six account. The profiles on the account are loaded next."
+    },
+    "loading_profiles": {
+      "progress_text": "Signing in and loading the profiles on your account..."
+    },
+    "profile": {
+      "title": "Choose a profile",
+      "description": "Pick the profile Music Assistant should use. Its listening history and library are the ones that get synced."
+    }
+  },
+  "errors": {
+    "login_failed": "Signing in failed. Check the email address and password and try again.",
+    "connection_failed": "Could not reach 24six. Check the internet connection of the server and try again.",
+    "no_profiles": "No profiles were found on this account.",
+    "pin_required": "The selected profile requires a PIN."
+  },
+  "manifest": {
+    "description": "Stream Jewish music, podcasts and radio from 24six.app"
+  }
+}
