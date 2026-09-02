@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -30,7 +32,7 @@ from music_assistant_models.media_items import (
     Track,
     UniqueList,
 )
-from music_assistant_models.streamdetails import StreamDetails
+from music_assistant_models.streamdetails import StreamDetails, StreamMetadata
 
 from music_assistant.controllers.cache import use_cache
 from music_assistant.helpers.podcast_parsers import rank_episodes_by_date
@@ -54,6 +56,7 @@ from .constants import (
     HLS_AUDIO_FORMAT,
     MAX_PAGES,
     PAGE_SIZE,
+    RADIO_METADATA_INTERVAL,
     RECOMMENDATION_ROW_SIZE,
     TOP_TRACKS_LIMIT,
 )
@@ -89,83 +92,91 @@ _API_ERRORS = (LoginFailed, MediaNotFoundError, ResourceTemporarilyUnavailable)
 # stories are albums of (children's) audio stories, listed with their own sort
 _STORIES_PARAMS: dict[str, str] = {"sort": "newStories", "with_contents": "0"}
 
-# recommendation rows served by a dedicated listing endpoint:
-# row id -> (name, translation key, icon, endpoint, params)
-_LISTING_ROWS: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
-    "newAlbums": (
-        "New Albums",
-        "new_albums",
-        "mdi-album",
-        f"{CONTENT_TYPE_MUSIC}/collection",
-        {"sort": "newAlbums", "with_contents": "0"},
+
+@dataclass(frozen=True)
+class _Row:
+    """A recommendation row: where its items come from and how it is presented."""
+
+    name: str
+    translation_key: str
+    icon: str
+    # dashboard: key of the (cached) content type dashboard payload the app's home shows
+    # listing: a dedicated listing endpoint with params
+    source: str
+    content_type: str = CONTENT_TYPE_MUSIC
+    key: str = ""
+    endpoint: str = ""
+    params: dict[str, str] = field(default_factory=dict)
+    # the profile permission (allowed map key) needed to show the row
+    permission: str = CONTENT_TYPE_MUSIC
+
+
+# row id -> row; the ids are stable, the frontend stores user preferences keyed on them
+_ROWS: dict[str, _Row] = {
+    "banners": _Row("Featured", "featured", "mdi-star", "dashboard", key="banners"),
+    "by24Six": _Row("24six Presents", "presents", "mdi-creation", "dashboard", key="by24Six"),
+    "releases": _Row("New Releases", "new_releases", "mdi-new-box", "dashboard", key="releases"),
+    "trending": _Row("Trending Tracks", "trending", "mdi-fire", "dashboard", key="trending"),
+    "recent": _Row("Recently Played", "recently_played", "mdi-history", "dashboard", key="recent"),
+    "newAlbums": _Row("New Albums", "new_albums", "mdi-album", "dashboard", key="newAlbums"),
+    "newSingles": _Row(
+        "New Singles", "new_singles", "mdi-music-note", "dashboard", key="newSingles"
     ),
-    "newSingles": (
-        "New Singles",
-        "new_singles",
-        "mdi-music-note",
-        f"{CONTENT_TYPE_MUSIC}/collection",
-        {"sort": "newSingles", "with_contents": "0"},
-    ),
-    "stories": (
+    "newStories": _Row(
         "New Stories",
         "new_stories",
         "mdi-book-open-page-variant",
-        f"{CONTENT_TYPE_MUSIC}/collection",
-        _STORIES_PARAMS,
+        "dashboard",
+        key="newStories",
+        permission="stories",
     ),
-    "playlists": (
-        "24six Playlists",
-        "playlists",
-        "mdi-playlist-music",
-        f"{CONTENT_TYPE_MUSIC}/playlist",
-        {"public": "1", "sort": "popular"},
+    "playlists": _Row(
+        "24six Playlists", "playlists", "mdi-playlist-music", "dashboard", key="playlists"
     ),
-    "artists": (
-        "Popular Artists",
-        "popular_artists",
-        "mdi-account-music",
-        f"{CONTENT_TYPE_MUSIC}/artist",
-        {"sort": "popular"},
+    "artists": _Row(
+        "Popular Artists", "popular_artists", "mdi-account-music", "dashboard", key="artists"
     ),
-    "newArtists": (
-        "New Artists",
-        "new_artists",
-        "mdi-account-star",
-        f"{CONTENT_TYPE_MUSIC}/artist",
-        {"sort": "recent"},
+    "newArtists": _Row(
+        "New Artists", "new_artists", "mdi-account-star", "dashboard", key="newArtists"
     ),
-    "trending": (
-        "Trending Tracks",
-        "trending",
-        "mdi-fire",
-        f"{CONTENT_TYPE_MUSIC}/content",
-        {"sort": "popular", "no_pagination": "0"},
+    "continueListening": _Row(
+        "Continue Listening",
+        "continue_listening",
+        "mdi-play-circle-outline",
+        "listing",
+        content_type=CONTENT_TYPE_PODCAST,
+        endpoint=f"{CONTENT_TYPE_PODCAST}/content",
+        params={"in_progress": "1", "no_pagination": "0"},
+        permission=CONTENT_TYPE_PODCAST,
     ),
-    "recent": (
-        "Recently Played",
-        "recently_played",
-        "mdi-history",
-        f"{CONTENT_TYPE_MUSIC}/content/recent",
-        {"grouped": "0"},
+    "popularPodcasts": _Row(
+        "Popular Podcasts",
+        "popular_podcasts",
+        "mdi-podcast",
+        "dashboard",
+        content_type=CONTENT_TYPE_PODCAST,
+        key="popular",
+        permission=CONTENT_TYPE_PODCAST,
     ),
-    "newPodcasts": (
+    "trendingEpisodes": _Row(
+        "Trending Episodes",
+        "trending_episodes",
+        "mdi-microphone",
+        "dashboard",
+        content_type=CONTENT_TYPE_PODCAST,
+        key="trending",
+        permission=CONTENT_TYPE_PODCAST,
+    ),
+    "newPodcasts": _Row(
         "New Podcast Episodes",
         "new_podcast_episodes",
         "mdi-podcast",
-        f"{CONTENT_TYPE_PODCAST}/content",
-        {"sort": "newest", "no_pagination": "0"},
+        "listing",
+        content_type=CONTENT_TYPE_PODCAST,
+        endpoint=f"{CONTENT_TYPE_PODCAST}/content",
+        params={"sort": "newest", "no_pagination": "0"},
+        permission=CONTENT_TYPE_PODCAST,
     ),
-}
-# recommendation rows served from the (cached) homepage payload:
-# row id -> (name, translation key, icon)
-_HOMEPAGE_ROWS: dict[str, tuple[str, str, str]] = {
-    "banners": ("Featured", "featured", "mdi-star"),
-    "by24Six": ("24six Presents", "presents", "mdi-creation"),
-}
-# rows that only make sense when the profile may access the content type
-_ROW_PERMISSIONS: dict[str, str] = {
-    "stories": "stories",
-    "newPodcasts": CONTENT_TYPE_PODCAST,
 }
 
 
@@ -242,6 +253,9 @@ class TwentyFourSixProvider(MusicProvider):
         :param limit: Number of items to return in the search (per type).
         """
         results = SearchResults()
+        if not search_query.strip():
+            # the API rejects an empty query with a validation error
+            return results
         music_types = {MediaType.ARTIST, MediaType.ALBUM, MediaType.TRACK, MediaType.PLAYLIST}
         if music_types & set(media_types):
             data = await self.api.api_post(
@@ -628,7 +642,7 @@ class TwentyFourSixProvider(MusicProvider):
                     {"format": await self._preferred_audio_format(content_type, item_id)},
                 )
         is_hls = urlparse(stream_url).path.endswith(".m3u8")
-        return StreamDetails(
+        details = StreamDetails(
             provider=self.instance_id,
             item_id=item_id,
             audio_format=AudioFormat(content_type=ContentType.AAC),
@@ -638,6 +652,10 @@ class TwentyFourSixProvider(MusicProvider):
             can_seek=media_type != MediaType.RADIO,
             path=stream_url,
         )
+        if media_type == MediaType.RADIO:
+            details.stream_metadata_update_callback = self._update_radio_metadata
+            details.stream_metadata_update_interval = RADIO_METADATA_INTERVAL
+        return details
 
     async def on_played(
         self,
@@ -682,8 +700,14 @@ class TwentyFourSixProvider(MusicProvider):
         folder = path_parts[0] if path_parts else None
 
         if folder == "category" and len(path_parts) > 1:
-            data = await self.api.api_get(f"{CONTENT_TYPE_MUSIC}/category/{path_parts[1]}")
-            return [parse_album(self, item) for item in _valid_items(data.get("releases"))]
+            # the category landing page only carries a teaser of releases, list them all
+            return [
+                parse_album(self, item)
+                async for item in self._paginate(
+                    f"{CONTENT_TYPE_MUSIC}/collection",
+                    {"category_id": path_parts[1], "sort": "popular", "with_contents": "0"},
+                )
+            ]
 
         if folder == "stories":
             return [parse_album(self, item) for item in await self._get_story_albums()]
@@ -730,25 +754,17 @@ class TwentyFourSixProvider(MusicProvider):
 
     async def get_recommendations(self) -> list[RecommendationFolder]:
         """Get this provider's recommendation rows, without items."""
-        rows = [
-            (row_id, name, translation_key, icon)
-            for row_id, (name, translation_key, icon) in _HOMEPAGE_ROWS.items()
-        ]
-        rows.extend(
-            (row_id, name, translation_key, icon)
-            for row_id, (name, translation_key, icon, _, _) in _LISTING_ROWS.items()
-        )
         return [
             RecommendationFolder(
                 item_id=row_id,
                 provider=self.instance_id,
-                name=name,
-                translation_key=translation_key,
-                icon=icon,
+                name=row.name,
+                translation_key=row.translation_key,
+                icon=row.icon,
                 is_playable=True,
             )
-            for row_id, name, translation_key, icon in rows
-            if self._profile_allows(_ROW_PERMISSIONS.get(row_id, CONTENT_TYPE_MUSIC))
+            for row_id, row in _ROWS.items()
+            if self._profile_allows(row.permission)
         ]
 
     async def get_recommendation_items(
@@ -760,20 +776,21 @@ class TwentyFourSixProvider(MusicProvider):
         :param item_id: The item_id of the row, as returned by get_recommendations.
         """
         items: UniqueList[MediaItemType | ItemMapping | BrowseFolder] = UniqueList()
-        if item_id in _HOMEPAGE_ROWS:
-            homepage = await self._get_homepage()
-            if item_id == "banners":
-                for banner in _valid_items(homepage.get("banners"), key="entity_id"):
+        row = _ROWS.get(item_id)
+        if row is None:
+            return items
+        if row.source == "dashboard":
+            dashboard = await self._get_dashboard(row.content_type)
+            if row.key == "banners":
+                for banner in _valid_items(dashboard.get("banners"), key="entity_id"):
                     if resolved := await self._resolve_banner(banner):
                         items.append(resolved)
                 return items
-            entries = _valid_items(homepage.get(item_id))
-        elif item_id in _LISTING_ROWS:
-            entries = await self._get_listing_row(item_id)
+            entries = _valid_items(dashboard.get(row.key))
         else:
-            return items
+            entries = await self._get_listing_row(item_id)
         for entry in entries:
-            if parsed := self._parse_by_type(entry):
+            if parsed := self._parse_by_type(entry, row.content_type):
                 items.append(parsed)
         await self._enrich_tracks_duration(items)
         return items
@@ -859,10 +876,11 @@ class TwentyFourSixProvider(MusicProvider):
     @use_cache(3600 * 6, allow_expired_cache=True)
     async def _get_listing_row(self, row_id: str) -> list[dict[str, Any]]:
         """Fetch and cache the raw items of a recommendation row served by a listing endpoint."""
-        _, _, _, endpoint, params = _LISTING_ROWS[row_id]
+        row = _ROWS[row_id]
         try:
             data = await self.api.api_get(
-                endpoint, params={**params, "page": "1", "per_page": str(RECOMMENDATION_ROW_SIZE)}
+                row.endpoint,
+                params={**row.params, "page": "1", "per_page": str(RECOMMENDATION_ROW_SIZE)},
             )
         except _API_ERRORS as err:
             self.logger.debug("Failed to fetch recommendation row %s: %s", row_id, err)
@@ -870,13 +888,45 @@ class TwentyFourSixProvider(MusicProvider):
         return _valid_items(data.get("data"))[:RECOMMENDATION_ROW_SIZE]
 
     @use_cache(3600 * 6, allow_expired_cache=True)
-    async def _get_homepage(self) -> dict[str, Any]:
-        """Fetch and cache the music homepage payload (banners and curated rows)."""
+    async def _get_dashboard(self, content_type: str) -> dict[str, Any]:
+        """Fetch and cache the dashboard (home screen) payload of a content type."""
         try:
-            return await self.api.api_get(CONTENT_TYPE_MUSIC, params={"use_popularity_logic": "1"})
+            return await self.api.api_get(content_type, params={"use_popularity_logic": "1"})
         except _API_ERRORS as err:
-            self.logger.debug("Failed to fetch homepage: %s", err)
+            self.logger.debug("Failed to fetch %s dashboard: %s", content_type, err)
             return {}
+
+    async def _update_radio_metadata(
+        self, stream_details: StreamDetails, elapsed_time: int
+    ) -> None:
+        """
+        Refresh the now-playing metadata of a radio station from the live dashboard.
+
+        :param stream_details: The stream details of the playing station to update.
+        :param elapsed_time: Elapsed playback time in seconds (unused).
+        """
+        try:
+            data = await self.api.api_get("live/dashboard", params={"use_popularity_logic": "1"})
+        except _API_ERRORS as err:
+            self.logger.debug("Could not refresh radio metadata: %s", err)
+            return
+        stations = _radio_stations(data)
+        station = next(
+            (item for item in stations if str(item.get("id")) == stream_details.item_id), None
+        )
+        now_playing = station.get("radio_now") if station else None
+        if not isinstance(now_playing, dict) or not now_playing.get("title"):
+            return
+        has_elapsed = now_playing.get("elapsed") is not None
+        stream_details.stream_metadata = StreamMetadata(
+            title=str(now_playing["title"]),
+            artist=now_playing.get("subtitle") or None,
+            album=now_playing.get("album") or None,
+            image_url=now_playing.get("img") or None,
+            duration=int(now_playing["duration"]) if now_playing.get("duration") else None,
+            elapsed_time=int(now_playing["elapsed"]) if has_elapsed else None,
+            elapsed_time_last_updated=time.time() if has_elapsed else None,
+        )
 
     @use_cache(3600 * 6, allow_expired_cache=True)
     async def _get_radio_stations(self) -> list[dict[str, Any]]:
@@ -886,8 +936,7 @@ class TwentyFourSixProvider(MusicProvider):
         except _API_ERRORS as err:
             self.logger.debug("Failed to fetch live dashboard: %s", err)
             return []
-        audio = data.get("audio") or {}
-        return _valid_items(audio.get("radio") or data.get("radio"))
+        return _radio_stations(data)
 
     async def _preferred_audio_format(self, content_type: str, prov_content_id: str) -> str:
         """Return the stream format to request for a content item, as the app would."""
@@ -947,10 +996,17 @@ class TwentyFourSixProvider(MusicProvider):
                 continue
             items[idx] = result
 
-    def _parse_by_type(self, item: dict[str, Any]) -> MediaItemType | None:
-        """Parse a v3 API item to the matching media item based on its type field."""
+    def _parse_by_type(
+        self, item: dict[str, Any], default_content_type: str = CONTENT_TYPE_MUSIC
+    ) -> MediaItemType | None:
+        """
+        Parse a v3 API item to the matching media item based on its type field.
+
+        :param item: The raw API item.
+        :param default_content_type: Content type to assume when the item does not carry one.
+        """
         item_type = item.get("type", "")
-        content_type = item.get("content_type") or CONTENT_TYPE_MUSIC
+        content_type = item.get("content_type") or default_content_type
         if item_type == "collection":
             if content_type == CONTENT_TYPE_PODCAST:
                 return parse_podcast(self, item)
@@ -1024,6 +1080,12 @@ class TwentyFourSixProvider(MusicProvider):
                 item_id: str = mapping.item_id
                 return item_id
         return None
+
+
+def _radio_stations(dashboard: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the radio stations of a live dashboard payload."""
+    audio = dashboard.get("audio") or {}
+    return _valid_items(audio.get("radio") or dashboard.get("radio"))
 
 
 def _valid_items(items: Any, key: str = "id") -> list[dict[str, Any]]:

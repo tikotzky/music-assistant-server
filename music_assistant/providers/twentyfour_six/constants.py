@@ -45,6 +45,8 @@ PAGE_SIZE: Final[int] = 200
 RECOMMENDATION_ROW_SIZE: Final[int] = 50
 # Most popular tracks returned for an artist
 TOP_TRACKS_LIMIT: Final[int] = 50
+# Seconds between now-playing refreshes of a playing radio station
+RADIO_METADATA_INTERVAL: Final[int] = 20
 
 # Fraction of an episode that must be played before it counts as fully played
 FULLY_PLAYED_THRESHOLD: Final[float] = 0.95
