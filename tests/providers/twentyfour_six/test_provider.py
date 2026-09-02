@@ -541,6 +541,51 @@ async def test_resume_position_and_play_report(provider: TwentyFourSixProvider) 
     log_playback.assert_awaited_with(item_id="66", seconds=100, current=100)
 
 
+async def test_similar_tracks_seeded_with_listened_history(
+    provider: TwentyFourSixProvider,
+) -> None:
+    """Tracks the listener stayed with join the seed list, quick skips do not."""
+    log_playback = cast("AsyncMock", provider.api.log_playback)
+
+    def track(item_id: str, duration: int = 200) -> Track:
+        return Track(
+            item_id=item_id,
+            provider=provider.instance_id,
+            name=item_id,
+            duration=duration,
+            provider_mappings={_mapping(provider, item_id)},
+        )
+
+    # listened past the threshold: remembered, most recent first
+    await provider.on_played(MediaType.TRACK, "1", True, 200, track("1"), is_playing=False)
+    await provider.on_played(MediaType.TRACK, "2", False, 45, track("2"), is_playing=False)
+    # a short track counts by fraction of its length
+    await provider.on_played(MediaType.TRACK, "3", False, 12, track("3", 40), is_playing=False)
+    # skipped early: reported to 24six but not used as a seed
+    await provider.on_played(MediaType.TRACK, "4", False, 8, track("4"), is_playing=False)
+    # played again: moves to the front instead of duplicating
+    await provider.on_played(MediaType.TRACK, "1", True, 200, track("1"), is_playing=False)
+    assert log_playback.await_count == 5
+    assert list(provider._listened) == ["1", "3", "2"]
+
+    _api_post(provider).return_value = {"data": [{"id": 9, "title": "Next", "type": "content"}]}
+    await provider.get_similar_tracks("2", limit=5)
+    _api_post(provider).assert_awaited_once_with(
+        "music/content/recommended", {"queue": ["2", "1", "3"], "limit": 5, "ai": 1}
+    )
+    # the seed list is capped and never repeats the seed itself
+    for item_id in range(10, 25):
+        await provider.on_played(
+            MediaType.TRACK, str(item_id), True, 200, track(str(item_id)), is_playing=False
+        )
+    _api_post(provider).reset_mock()
+    await provider.get_similar_tracks("24", limit=5)
+    queue = cast("Any", _api_post(provider).await_args).args[1]["queue"]
+    assert queue[0] == "24"
+    assert len(queue) == 10
+    assert "24" not in queue[1:]
+
+
 async def test_on_played_reports_tracks_and_episodes_only(
     provider: TwentyFourSixProvider,
 ) -> None:
