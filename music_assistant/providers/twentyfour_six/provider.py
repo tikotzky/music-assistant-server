@@ -473,9 +473,11 @@ class TwentyFourSixProvider(MusicProvider):
         :param prov_track_id: The provider track id.
         :param limit: Maximum number of tracks to return.
         """
+        # the app's autoplay asks the AI-backed engine (ai=1) with the queue as seed; that
+        # engine ignores the limit and answers with a fixed batch, so trim it here
         data = await self.api.api_post(
             f"{CONTENT_TYPE_MUSIC}/content/recommended",
-            {"queue": [prov_track_id], "limit": limit, "ai": 0},
+            {"queue": [prov_track_id], "limit": limit, "ai": 1},
         )
         return [parse_track(self, item) for item in valid_items(data.get("data"))[:limit]]
 
