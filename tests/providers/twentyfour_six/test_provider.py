@@ -157,14 +157,52 @@ async def test_stream_details_use_content_audio_format(provider: TwentyFourSixPr
 
 
 async def test_stream_details_for_radio(provider: TwentyFourSixProvider) -> None:
-    """A radio station streams its live HLS feed and cannot seek."""
+    """A radio station streams its live HLS feed, cannot seek and refreshes now-playing."""
     stream_url = cast("AsyncMock", provider.api.api_get_stream_url)
     stream_url.return_value = "https://live.example.com/radio/index.m3u8"
     details = await provider.get_stream_details("77", MediaType.RADIO)
     stream_url.assert_awaited_once_with("radio/77/play", {"livestream": "1", "format": "m3u8"})
     assert details.stream_type == StreamType.HLS
     assert details.can_seek is False
+    assert details.stream_metadata_update_callback is not None
+    assert details.stream_metadata_update_interval == 20
     _api_post(provider).assert_not_awaited()
+
+    _api_get(provider).return_value = {
+        "audio": {
+            "radio": [
+                {"id": 78, "title": "Other", "radio_now": {"title": "Nope"}},
+                {
+                    "id": 77,
+                    "title": "Station",
+                    "radio_now": {
+                        "title": "Song",
+                        "subtitle": "Singer",
+                        "album": "Record",
+                        "img": "https://img.example.com/now.jpg",
+                        "duration": 200,
+                        "elapsed": 42,
+                    },
+                },
+            ]
+        }
+    }
+    await details.stream_metadata_update_callback(details, 0)
+    assert details.stream_metadata is not None
+    assert details.stream_metadata.title == "Song"
+    assert details.stream_metadata.artist == "Singer"
+    assert details.stream_metadata.album == "Record"
+    assert details.stream_metadata.image_url == "https://img.example.com/now.jpg"
+    assert details.stream_metadata.duration == 200
+    assert details.stream_metadata.elapsed_time == 42
+    _api_get(provider).assert_awaited_once_with(
+        "live/dashboard", params={"use_popularity_logic": "1"}
+    )
+
+    # a station without now-playing info keeps the previous metadata
+    _api_get(provider).return_value = {"audio": {"radio": [{"id": 77, "radio_now": None}]}}
+    await details.stream_metadata_update_callback(details, 30)
+    assert details.stream_metadata.title == "Song"
 
 
 async def test_similar_tracks_and_artists(provider: TwentyFourSixProvider) -> None:
@@ -229,20 +267,23 @@ async def test_recommendation_rows_and_items(provider: TwentyFourSixProvider) ->
     rows = await provider.get_recommendations()
     row_ids = [row.item_id for row in rows]
     assert row_ids[:2] == ["banners", "by24Six"]
-    assert {"newAlbums", "stories", "trending", "recent", "newPodcasts"} <= set(row_ids)
+    assert {"newAlbums", "newStories", "trending", "recent", "newPodcasts"} <= set(row_ids)
+    assert {"continueListening", "popularPodcasts", "trendingEpisodes"} <= set(row_ids)
     assert all(row.items == [] for row in rows)
     assert all(row.translation_key for row in rows)
 
     # rows for content the profile may not access are left out
     provider.api.profile = {"allowed": {"stories": False, "podcast": False, "music": True}}
     row_ids = [row.item_id for row in await provider.get_recommendations()]
-    assert "stories" not in row_ids
+    assert "newStories" not in row_ids
     assert "newPodcasts" not in row_ids
+    assert "continueListening" not in row_ids
     assert "newAlbums" in row_ids
     provider.api.profile = {}
 
+    # homepage rows come from the single (cached) homepage payload
     _api_get(provider).return_value = {
-        "data": [
+        "newAlbums": [
             {"id": 1, "type": "collection", "title": "Album"},
             {"id": 2, "type": "artist", "name": "Artist"},
             {"id": 3, "type": "playlist", "title": "List"},
@@ -251,11 +292,32 @@ async def test_recommendation_rows_and_items(provider: TwentyFourSixProvider) ->
         ]
     }
     items = await provider.get_recommendation_items("newAlbums")
-    _api_get(provider).assert_awaited_once_with(
-        "music/collection",
-        params={"sort": "newAlbums", "with_contents": "0", "page": "1", "per_page": "50"},
-    )
+    _api_get(provider).assert_awaited_once_with("music", params={"use_popularity_logic": "1"})
     assert [type(item) for item in items] == [Album, Artist, Playlist, Track]
+
+    # listing rows use their own endpoint
+    _api_get(provider).reset_mock()
+    _api_get(provider).return_value = {
+        "data": [{"id": 6, "type": "content", "content_type": "podcast", "collection_id": 9}]
+    }
+    items = await provider.get_recommendation_items("newPodcasts")
+    _api_get(provider).assert_awaited_once_with(
+        "podcast/content",
+        params={"sort": "newest", "no_pagination": "0", "page": "1", "per_page": "50"},
+    )
+    assert [type(item).__name__ for item in items] == ["PodcastEpisode"]
+
+    # podcast dashboard rows come from the podcast dashboard and parse as podcast items
+    _api_get(provider).reset_mock()
+    _api_get(provider).return_value = {
+        "popular": [{"id": 7, "type": "collection", "title": "Show"}],
+        "trending": [{"id": 8, "type": "content", "collection_id": 7, "title": "Ep"}],
+    }
+    shows = await provider.get_recommendation_items("popularPodcasts")
+    _api_get(provider).assert_awaited_once_with("podcast", params={"use_popularity_logic": "1"})
+    assert [type(item).__name__ for item in shows] == ["Podcast"]
+    episodes = await provider.get_recommendation_items("trendingEpisodes")
+    assert [type(item).__name__ for item in episodes] == ["PodcastEpisode"]
     assert await provider.get_recommendation_items("nope") == []
 
 
@@ -312,9 +374,21 @@ async def test_browse_categories(provider: TwentyFourSixProvider) -> None:
         ("3", "Wedding", "twentyfour_six--test://category/3")
     ]
 
-    _api_get(provider).return_value = {"releases": [{"id": 22, "title": "Album"}]}
+    _api_get(provider).return_value = {
+        "data": [{"id": 22, "title": "Album"}],
+        "meta": {"pagination": {"next_page": None}},
+    }
     albums = await provider.browse("twentyfour_six--test://category/3")
-    _api_get(provider).assert_awaited_with("music/category/3")
+    _api_get(provider).assert_awaited_with(
+        "music/collection",
+        params={
+            "per_page": "200",
+            "category_id": "3",
+            "sort": "popular",
+            "with_contents": "0",
+            "page": "1",
+        },
+    )
     assert [item.item_id for item in albums] == ["22"]
 
 
