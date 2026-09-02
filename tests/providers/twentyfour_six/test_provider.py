@@ -506,6 +506,17 @@ async def test_library_podcasts_respect_profile(provider: TwentyFourSixProvider)
     assert [podcast.item_id for podcast in podcasts] == ["55"]
 
 
+async def test_paginate_caps_at_max_items(provider: TwentyFourSixProvider) -> None:
+    """A capped listing stops requesting pages once enough items were yielded."""
+    _api_get(provider).return_value = {
+        "data": [{"id": i + 1} for i in range(3)],
+        "meta": {"pagination": {"next_page": 2}},
+    }
+    items = [item async for item in provider._paginate("music/collection", {}, max_items=5)]
+    assert len(items) == 6
+    assert _api_get(provider).await_count == 2
+
+
 def test_total_pages_derived_from_totals() -> None:
     """The API reports totals and a page size; the page count is derived from them."""
     assert _total_pages({"total": 73, "per_page": 200, "next_page": None}) == 1

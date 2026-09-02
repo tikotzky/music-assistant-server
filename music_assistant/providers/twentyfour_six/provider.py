@@ -40,6 +40,7 @@ from music_assistant.models.music_provider import MusicProvider
 
 from .api_client import TwentyFourSixAPIClient
 from .constants import (
+    CATEGORY_BROWSE_LIMIT,
     CONF_DEVICE_ID,
     CONF_DEVICE_SERIAL,
     CONF_EMAIL,
@@ -700,13 +701,8 @@ class TwentyFourSixProvider(MusicProvider):
         folder = path_parts[0] if path_parts else None
 
         if folder == "category" and len(path_parts) > 1:
-            # the category landing page only carries a teaser of releases, list them all
             return [
-                parse_album(self, item)
-                async for item in self._paginate(
-                    f"{CONTENT_TYPE_MUSIC}/collection",
-                    {"category_id": path_parts[1], "sort": "popular", "with_contents": "0"},
-                )
+                parse_album(self, item) for item in await self._get_category_albums(path_parts[1])
             ]
 
         if folder == "stories":
@@ -866,6 +862,25 @@ class TwentyFourSixProvider(MusicProvider):
             api_page += 1
 
     @use_cache(3600 * 6, allow_expired_cache=True)
+    async def _get_category_albums(self, category_id: str) -> list[dict[str, Any]]:
+        """
+        Fetch and cache the most popular albums of a category.
+
+        The landing page only carries a teaser, while some categories hold thousands of
+        albums, so the listing is capped to keep browsing responsive.
+
+        :param category_id: The 24six category id.
+        """
+        return [
+            item
+            async for item in self._paginate(
+                f"{CONTENT_TYPE_MUSIC}/collection",
+                {"category_id": category_id, "sort": "popular", "with_contents": "0"},
+                max_items=CATEGORY_BROWSE_LIMIT,
+            )
+        ]
+
+    @use_cache(3600 * 6, allow_expired_cache=True)
     async def _get_story_albums(self) -> list[dict[str, Any]]:
         """Fetch and cache the raw story albums across all pages of the listing."""
         return [
@@ -947,7 +962,7 @@ class TwentyFourSixProvider(MusicProvider):
         return get_audio_format(content_data) or DEFAULT_AUDIO_FORMAT
 
     async def _paginate(
-        self, endpoint: str, params: dict[str, str]
+        self, endpoint: str, params: dict[str, str], max_items: int | None = None
     ) -> AsyncGenerator[dict[str, Any]]:
         """
         Paginate a listing endpoint, yielding the items with a valid id.
@@ -955,8 +970,10 @@ class TwentyFourSixProvider(MusicProvider):
         :param endpoint: The API endpoint to paginate.
         :param params: Extra query parameters (page is managed automatically, per_page
             defaults to PAGE_SIZE but can be overridden via params).
+        :param max_items: Stop after (roughly) this many items instead of the last page.
         """
         page = 1
+        yielded = 0
         while page <= MAX_PAGES:
             data = await self.api.api_get(
                 endpoint, params={"per_page": str(PAGE_SIZE), **params, "page": str(page)}
@@ -974,6 +991,9 @@ class TwentyFourSixProvider(MusicProvider):
                 break
             for item in items:
                 yield item
+            yielded += len(items)
+            if max_items is not None and yielded >= max_items:
+                break
             if not _has_next_page(pagination, page, len(items)):
                 break
             page += 1
