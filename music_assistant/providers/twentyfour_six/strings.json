@@ -43,6 +43,9 @@
     "folder": {
       "categories": {
         "name": "Categories"
+      },
+      "stories": {
+        "name": "Stories"
       }
     },
     "recommendations": {
@@ -57,6 +60,9 @@
       },
       "new_singles": {
         "name": "New Singles"
+      },
+      "new_stories": {
+        "name": "New Stories"
       },
       "playlists": {
         "name": "24six Playlists"
