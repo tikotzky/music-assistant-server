@@ -38,5 +38,44 @@
   },
   "manifest": {
     "description": "Stream Jewish music, podcasts and radio from 24six.app"
+  },
+  "media": {
+    "folder": {
+      "categories": {
+        "name": "Categories"
+      }
+    },
+    "recommendations": {
+      "featured": {
+        "name": "Featured"
+      },
+      "presents": {
+        "name": "24six Presents"
+      },
+      "new_albums": {
+        "name": "New Albums"
+      },
+      "new_singles": {
+        "name": "New Singles"
+      },
+      "playlists": {
+        "name": "24six Playlists"
+      },
+      "popular_artists": {
+        "name": "Popular Artists"
+      },
+      "new_artists": {
+        "name": "New Artists"
+      },
+      "trending": {
+        "name": "Trending Tracks"
+      },
+      "recently_played": {
+        "name": "Recently Played"
+      },
+      "new_podcast_episodes": {
+        "name": "New Podcast Episodes"
+      }
+    }
   }
 }
