@@ -307,6 +307,7 @@ class TwentyFourSixProvider(MusicProvider):
     async def get_library_podcasts(self) -> AsyncGenerator[Podcast]:
         """Retrieve library podcasts from the provider."""
         if not self._profile_allows(CONTENT_TYPE_PODCAST):
+            self.logger.debug("Profile may not access podcasts, skipping podcast library")
             return
         async for item in self._paginate(
             f"{CONTENT_TYPE_PODCAST}/collection",
@@ -317,6 +318,7 @@ class TwentyFourSixProvider(MusicProvider):
     async def get_library_radios(self) -> AsyncGenerator[Radio]:
         """Retrieve the radio stations offered by 24six."""
         if not self._profile_allows("radio"):
+            self.logger.debug("Profile may not access radio, skipping radio stations")
             return
         for item in await self._get_radio_stations():
             yield parse_radio(self, item)
@@ -878,11 +880,18 @@ class TwentyFourSixProvider(MusicProvider):
                 endpoint, params={"per_page": str(PAGE_SIZE), **params, "page": str(page)}
             )
             items = _valid_items(data.get("data"))
+            pagination = (data.get("meta") or {}).get("pagination") or {}
+            self.logger.debug(
+                "Fetched %s items from %s page %s (pagination: %s)",
+                len(items),
+                endpoint,
+                page,
+                pagination or "none",
+            )
             if not items:
                 break
             for item in items:
                 yield item
-            pagination = (data.get("meta") or {}).get("pagination") or {}
             if not _has_next_page(pagination, page, len(items)):
                 break
             page += 1
