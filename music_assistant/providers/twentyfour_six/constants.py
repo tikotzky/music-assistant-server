@@ -47,6 +47,8 @@ RECOMMENDATION_ROW_SIZE: Final[int] = 50
 TOP_TRACKS_LIMIT: Final[int] = 50
 # Seconds between now-playing refreshes of a playing radio station
 RADIO_METADATA_INTERVAL: Final[int] = 20
+# Albums listed when browsing a category (some categories hold thousands)
+CATEGORY_BROWSE_LIMIT: Final[int] = 400
 
 # Fraction of an episode that must be played before it counts as fully played
 FULLY_PLAYED_THRESHOLD: Final[float] = 0.95
