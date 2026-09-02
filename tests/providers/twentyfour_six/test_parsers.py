@@ -260,6 +260,18 @@ def test_parse_release_date_formats() -> None:
     assert parse_release_date({}) is None
 
 
+def test_episode_release_date_falls_back_to_created_at(provider: TwentyFourSixProvider) -> None:
+    """Episodes without a release date take their publication time from created_at."""
+    episode = parse_podcast_episode(
+        provider, {**EPISODE_OBJ, "release_date": None, "created_at": 1704164645}
+    )
+    assert episode.metadata.release_date == datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
+    assert parse_release_date({"created_at": 1704164645}) is None
+    assert parse_release_date({"created_at": 1704164645}, created_fallback=True) == datetime(
+        2024, 1, 2, 3, 4, 5, tzinfo=UTC
+    )
+
+
 def test_resume_helpers() -> None:
     """The resume position and timestamp come from the history, with sane fallbacks."""
     assert parse_resume_position({"history": {"current": "12.7"}}) == 12
