@@ -8,7 +8,7 @@
 # Home Assistant add-on. Finally it verifies that all three exist.
 #
 # Usage: scripts/update_24six.sh [--skip-checks] [--no-release] [--force-release]
-#   --skip-checks    Do not run pytest and pre-commit before pushing.
+#   --skip-checks    Do not sync dependencies or run pytest and pre-commit before pushing.
 #   --no-release     Rebase and push only; do not dispatch the release workflow.
 #   --force-release  Dispatch the release workflow even when nothing new was pushed.
 #
@@ -62,7 +62,7 @@ done
 
 step() { printf '\n▶ %s\n' "$*"; }
 
-for tool in git gh curl python3; do
+for tool in git gh curl python3 uv; do
   if ! command -v "$tool" &>/dev/null; then
     echo "❌ $tool is required" >&2
     exit 1
@@ -104,11 +104,18 @@ git checkout --quiet "$FORK_BRANCH"
 echo "24six commits on top of upstream: $(git rev-list --count "$UPSTREAM_STABLE..$FORK_BRANCH")"
 
 if [[ "$skip_checks" == false ]]; then
-  step "Running the 24six tests"
   if [[ -f .venv/bin/activate ]]; then
     # shellcheck disable=SC1091
     source .venv/bin/activate
   fi
+
+  # mypy checks the whole tree, so upstream's new dependency pins must be installed first
+  # (the same commands as scripts/setup.sh, which also sets URLLIB3_NO_OVERRIDE).
+  step "Syncing dependencies with the rebased requirements"
+  URLLIB3_NO_OVERRIDE=1 uv pip install --quiet -e ".[test]"
+  URLLIB3_NO_OVERRIDE=1 uv pip install --quiet --index-strategy unsafe-best-match -r requirements_all.txt
+
+  step "Running the 24six tests"
   python -m pytest tests/providers/twentyfour_six tests/scripts/test_release_24six.py \
     --quiet --no-header -p no:cacheprovider
 
