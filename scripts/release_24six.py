@@ -81,9 +81,9 @@ class GitRepository:
         """
         self.path = path
 
-    def upstream_base(self, tag_namespace: str) -> str:
+    def upstream_releases(self, tag_namespace: str) -> list[str]:
         """
-        Return the newest upstream stable release that is part of ``HEAD``.
+        Return the upstream stable release versions that were fetched, newest first.
 
         :param tag_namespace: Ref prefix the upstream tags were fetched into,
             e.g. ``refs/upstream-tags``.
@@ -95,8 +95,17 @@ class GitRepository:
             for ref in refs
             if UPSTREAM_TAG_PATTERN.fullmatch(ref.removeprefix(prefix))
         ]
-        for tag in sorted(candidates, key=_version_tuple, reverse=True):
-            if self._is_ancestor(f"{prefix}{tag}^{{commit}}", "HEAD"):
+        return sorted(candidates, key=_version_tuple, reverse=True)
+
+    def upstream_base(self, tag_namespace: str) -> str:
+        """
+        Return the newest upstream stable release that is part of ``HEAD``.
+
+        :param tag_namespace: Ref prefix the upstream tags were fetched into,
+            e.g. ``refs/upstream-tags``.
+        """
+        for tag in self.upstream_releases(tag_namespace):
+            if self._is_ancestor(f"{tag_namespace}/{tag}^{{commit}}", "HEAD"):
                 return tag
         raise ForkReleaseError(
             f"No upstream stable release tag under {tag_namespace} is part of HEAD; "
@@ -128,6 +137,34 @@ class GitRepository:
             text=True,
             check=True,
         ).stdout.strip()
+
+
+@dataclass(frozen=True)
+class UpstreamStatus:
+    """How the checked-out branch relates to upstream's stable releases."""
+
+    base: str
+    newest: str
+
+    @property
+    def behind(self) -> bool:
+        """Return whether upstream has released a stable version newer than the base."""
+        return self.base != self.newest
+
+
+def upstream_status(repository: GitRepository, tag_namespace: str) -> UpstreamStatus:
+    """
+    Compare the checked-out branch's upstream base with upstream's newest stable release.
+
+    :param repository: Repository holding the fork branch at ``HEAD``.
+    :param tag_namespace: Ref prefix the upstream tags were fetched into.
+    """
+    releases = repository.upstream_releases(tag_namespace)
+    if not releases:
+        raise ForkReleaseError(
+            f"No upstream stable release tags were fetched under {tag_namespace}"
+        )
+    return UpstreamStatus(base=repository.upstream_base(tag_namespace), newest=releases[0])
 
 
 def resolve_version(
@@ -238,6 +275,13 @@ def _dispatch(args: argparse.Namespace) -> dict[str, str]:
             "package_version": version.package_version,
             "base": version.base,
         }
+    if args.command == "upstream-status":
+        status = upstream_status(GitRepository(args.repository), args.upstream_tag_namespace)
+        return {
+            "base": status.base,
+            "newest": status.newest,
+            "behind": "true" if status.behind else "false",
+        }
     if args.command == "base-image-version":
         return {"base_image_version": base_image_version(args.release_workflow)}
     version = ForkVersion.parse(args.version)
@@ -287,6 +331,9 @@ def _build_parser() -> argparse.ArgumentParser:
     resolve_parser = subparsers.add_parser("resolve-version")
     resolve_parser.add_argument("--requested", default="")
     _add_common_arguments(resolve_parser)
+
+    status_parser = subparsers.add_parser("upstream-status")
+    _add_common_arguments(status_parser)
 
     image_parser = subparsers.add_parser("base-image-version")
     image_parser.add_argument("--release-workflow", type=Path, required=True)
