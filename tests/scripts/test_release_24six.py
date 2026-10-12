@@ -11,10 +11,12 @@ from scripts.release_24six import (
     ForkReleaseError,
     ForkVersion,
     GitRepository,
+    UpstreamStatus,
     base_image_version,
     next_number,
     release_notes,
     resolve_version,
+    upstream_status,
 )
 
 TAG_NAMESPACE = "refs/upstream-tags"
@@ -125,6 +127,61 @@ def test_resolve_version_needs_an_upstream_base(tmp_path: Path) -> None:
 
     with pytest.raises(ForkReleaseError, match="No upstream stable release tag"):
         resolve_version(GitRepository(tmp_path), "", TAG_NAMESPACE)
+
+
+def test_upstream_status_is_current_on_the_newest_release(
+    repository: tuple[Path, GitRepository],
+) -> None:
+    """A branch based on upstream's newest stable release is not behind."""
+    _path, repo = repository
+
+    status = upstream_status(repo, TAG_NAMESPACE)
+
+    assert status == UpstreamStatus(base="2.10.1", newest="2.10.1")
+    assert not status.behind
+
+
+def test_upstream_status_is_behind_a_newer_release_outside_the_branch(
+    repository: tuple[Path, GitRepository],
+) -> None:
+    """A newer upstream stable tag the branch does not contain means the branch is behind."""
+    path, repo = repository
+    _git(path, "checkout", "--quiet", "-b", "other", f"{TAG_NAMESPACE}/2.10.1")
+    _commit(path, "upstream 2.10.2")
+    _git(path, "update-ref", f"{TAG_NAMESPACE}/2.10.2", "HEAD")
+    _git(path, "update-ref", f"{TAG_NAMESPACE}/2.11.0b1", "HEAD")
+    _git(path, "checkout", "--quiet", "stable")
+
+    status = upstream_status(repo, TAG_NAMESPACE)
+
+    assert status == UpstreamStatus(base="2.10.1", newest="2.10.2")
+    assert status.behind
+
+
+def test_upstream_status_orders_releases_numerically(
+    repository: tuple[Path, GitRepository],
+) -> None:
+    """2.10.10 is newer than 2.10.9 even though it sorts first as text."""
+    path, repo = repository
+    _git(path, "checkout", "--quiet", "-b", "other", f"{TAG_NAMESPACE}/2.10.1")
+    _commit(path, "upstream 2.10.9")
+    _git(path, "update-ref", f"{TAG_NAMESPACE}/2.10.9", "HEAD")
+    _commit(path, "upstream 2.10.10")
+    _git(path, "update-ref", f"{TAG_NAMESPACE}/2.10.10", "HEAD")
+    _git(path, "checkout", "--quiet", "stable")
+
+    assert upstream_status(repo, TAG_NAMESPACE).newest == "2.10.10"
+
+
+def test_upstream_status_needs_fetched_upstream_tags(tmp_path: Path) -> None:
+    """Without upstream tags there is nothing to compare against."""
+    _git(tmp_path, "init", "-b", "stable")
+    _git(tmp_path, "config", "user.name", "Release Test")
+    _git(tmp_path, "config", "user.email", "release@example.com")
+    _commit(tmp_path, "orphan")
+
+    with pytest.raises(ForkReleaseError, match="No upstream stable release tags were fetched"):
+        upstream_status(GitRepository(tmp_path), TAG_NAMESPACE)
 
 
 def test_commit_subjects_lists_the_fork_commits_oldest_first(
