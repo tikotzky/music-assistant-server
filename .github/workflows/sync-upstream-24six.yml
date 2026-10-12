@@ -1,0 +1,138 @@
+name: 24six Sync Upstream
+
+# Keeps the 24six fork on the latest upstream stable release without manual work. Once a day
+# the stable branch (upstream stable with the 24six commits on top) is compared with upstream's
+# release tags. When upstream has tagged a newer stable release, the 24six commits are rebased
+# onto it, checked, force-pushed and released through the "24six Release" workflow.
+# scripts/update_24six.sh does the same from a developer machine.
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+# Shares the release workflow's group, so a sync never rewrites stable while a release builds.
+concurrency:
+  group: release-24six
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: music-assistant/server
+  UPSTREAM_TAG_NAMESPACE: refs/upstream-tags
+  RELEASE_WORKFLOW: release-24six.yml
+  GENERATED_TRANSLATIONS: music_assistant/translations/en.json
+
+jobs:
+  sync:
+    name: Rebase onto the latest upstream stable release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the stable branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: stable
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          check-latest: true
+
+      - name: Fetch upstream release tags
+        run: |
+          git remote add upstream "https://github.com/$UPSTREAM_REPOSITORY.git"
+          git fetch --quiet upstream "+refs/tags/*:$UPSTREAM_TAG_NAMESPACE/*"
+
+      - name: Compare with the newest upstream release
+        id: status
+        run: |
+          python3 scripts/release_24six.py upstream-status \
+            --upstream-tag-namespace "$UPSTREAM_TAG_NAMESPACE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Report an up-to-date branch
+        if: steps.status.outputs.behind != 'true'
+        env:
+          BASE: ${{ steps.status.outputs.base }}
+        run: echo "stable is already based on upstream $BASE; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install the translation builder's dependency
+        if: steps.status.outputs.behind == 'true'
+        run: python3 -m pip install --quiet orjson
+
+      - name: Rebase the 24six commits onto the new release
+        if: steps.status.outputs.behind == 'true'
+        env:
+          BASE: ${{ steps.status.outputs.base }}
+          NEWEST: ${{ steps.status.outputs.newest }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          old_base="$UPSTREAM_TAG_NAMESPACE/$BASE^{commit}"
+          new_base="$UPSTREAM_TAG_NAMESPACE/$NEWEST^{commit}"
+          echo "Rebasing $(git rev-list --count "$old_base..HEAD") 24six commits from $BASE onto $NEWEST"
+          if git rebase --onto "$new_base" "$old_base" stable; then
+            exit 0
+          fi
+          # en.json is generated from the per-module strings.json files, so a conflict in it is
+          # resolved by regenerating it. Any other conflict needs a person.
+          while true; do
+            conflicts=$(git diff --name-only --diff-filter=U)
+            if [ "$conflicts" != "$GENERATED_TRANSLATIONS" ]; then
+              echo "::error::Rebasing onto $NEWEST needs manual conflict resolution in:" \
+                "${conflicts:-(no conflicted files; see the log above)}"
+              git status
+              git rebase --abort
+              exit 1
+            fi
+            python3 -m scripts.build_translations
+            git add "$GENERATED_TRANSLATIONS"
+            if GIT_EDITOR=true git rebase --continue; then
+              break
+            fi
+          done
+
+      - name: Install uv
+        if: steps.status.outputs.behind == 'true'
+        run: pip install uv
+
+      - name: Install dependencies
+        if: steps.status.outputs.behind == 'true'
+        # --index-strategy: allow PyPI packages when also using the PyTorch extra index
+        # https://docs.astral.sh/uv/pip/compatibility/#packages-that-exist-on-multiple-indexes
+        run: uv pip install --system --index-strategy unsafe-best-match . ".[test]" -r requirements_all.txt
+
+      - name: Run the 24six tests
+        if: steps.status.outputs.behind == 'true'
+        run: pytest tests/providers/twentyfour_six tests/scripts/test_release_24six.py --quiet --no-header
+
+      - name: Run pre-commit on the files the fork changes
+        if: steps.status.outputs.behind == 'true'
+        env:
+          NEWEST: ${{ steps.status.outputs.newest }}
+        run: |
+          git diff --name-only --diff-filter=d "$UPSTREAM_TAG_NAMESPACE/$NEWEST^{commit}..HEAD" |
+            SKIP=no-commit-to-branch xargs pre-commit run --files
+
+      - name: Push the rebased branch
+        if: steps.status.outputs.behind == 'true'
+        run: git push --force-with-lease origin stable
+
+      - name: Release the new version
+        if: steps.status.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.status.outputs.base }}
+          NEWEST: ${{ steps.status.outputs.newest }}
+        run: |
+          # gh would otherwise pick the "upstream" remote added above as the target repository
+          gh workflow run "$RELEASE_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref stable
+          {
+            echo "Rebased stable from upstream $BASE onto $NEWEST and dispatched the release workflow."
+            echo "Follow it at https://github.com/$GITHUB_REPOSITORY/actions/workflows/$RELEASE_WORKFLOW"
+          } >> "$GITHUB_STEP_SUMMARY"

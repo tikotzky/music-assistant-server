@@ -5,7 +5,8 @@
 # script fetches upstream, rebases the fork branch onto upstream stable, runs the provider and
 # release-script checks, force-pushes the fork's stable branch and then dispatches the
 # "24six Release" workflow, which builds the image, creates the GitHub release and bumps the
-# Home Assistant add-on. Finally it verifies that all three exist.
+# Home Assistant add-on. Finally it verifies that all three exist. The daily workflow in
+# .github/workflows/sync-upstream-24six.yml does the same unattended.
 #
 # Usage: scripts/update_24six.sh [--skip-checks] [--no-release] [--force-release]
 #   --skip-checks    Do not sync dependencies or run pytest and pre-commit before pushing.
@@ -102,6 +103,15 @@ else
 fi
 git checkout --quiet "$FORK_BRANCH"
 echo "24six commits on top of upstream: $(git rev-list --count "$UPSTREAM_STABLE..$FORK_BRANCH")"
+
+# The sync workflow (.github/workflows/sync-upstream-24six.yml) may have rebased and released
+# this same content already; its commits have other ids, so adopt them instead of re-pushing
+# an identical tree and cutting a duplicate release.
+if [[ "$(git rev-parse "$FORK_BRANCH^{tree}")" == "$(git rev-parse "$FORK_STABLE^{tree}")" &&
+  "$(git rev-parse "$FORK_BRANCH")" != "$(git rev-parse "$FORK_STABLE")" ]]; then
+  echo "$FORK_STABLE already carries this exact content; adopting its commits."
+  git reset --quiet --hard "$FORK_STABLE"
+fi
 
 if [[ "$skip_checks" == false ]]; then
   if [[ -f .venv/bin/activate ]]; then
