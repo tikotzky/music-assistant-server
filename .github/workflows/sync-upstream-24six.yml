@@ -31,11 +31,15 @@ jobs:
     name: Rebase onto the latest upstream stable release
     runs-on: ubuntu-latest
     steps:
+      # The rebased branch carries upstream's workflow files, and GITHUB_TOKEN may not push
+      # changes under .github/workflows; the personal access token the release workflow uses
+      # for the add-on repository can.
       - name: Check out the stable branch
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: stable
           fetch-depth: 0
+          token: ${{ secrets.PRIVILEGED_GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
